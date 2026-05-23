@@ -8,6 +8,8 @@ import typer
 
 from audiobook.adapt import merge_pronunciation as _merge_pron
 from audiobook.adapt import validate_adapted_dir as _validate_dir
+from audiobook.chunk import chunk_work_dir as _chunk_dir
+from audiobook.config import load_config
 from audiobook.parse import parse_epub as _parse_epub
 
 app = typer.Typer(
@@ -47,6 +49,22 @@ def merge_pron(work_dir: Path = typer.Argument(..., exists=True, file_okay=False
     """Merge per-chapter pronunciation hints into work/pronunciation.json."""
     out = _merge_pron(work_dir)
     typer.echo(f"wrote {out}")
+
+
+@app.command("chunk")
+def chunk_cmd(
+    work_dir: Path = typer.Argument(..., exists=True, file_okay=False),  # noqa: B008
+    config: Path = typer.Option(Path("./config.toml"), "--config", exists=True),  # noqa: B008
+) -> None:
+    """Stage 3 — chunk adapted chapters into TTS-sized pieces."""
+    cfg = load_config(config)
+    n = _chunk_dir(
+        work_dir,
+        max_chars=cfg.chunk.max_chars,
+        paragraph_silence_ms=cfg.chunk.paragraph_silence_ms,
+        section_silence_ms=cfg.chunk.section_silence_ms,
+    )
+    typer.echo(f"chunked {n} chapters")
 
 
 if __name__ == "__main__":
