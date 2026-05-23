@@ -8,6 +8,7 @@ import typer
 
 from audiobook.adapt import merge_pronunciation as _merge_pron
 from audiobook.adapt import validate_adapted_dir as _validate_dir
+from audiobook.assemble import assemble_book as _assemble
 from audiobook.chunk import chunk_work_dir as _chunk_dir
 from audiobook.config import load_config
 from audiobook.parse import parse_epub as _parse_epub
@@ -119,6 +120,30 @@ def render_cmd(
     cfg = load_config(config)
     render_work_dir(work_dir, device=cfg.render.device, workers=cfg.render.workers, voice_path=voice)
     typer.echo("render complete")
+
+
+@app.command("assemble")
+def assemble_cmd(
+    work_dir: Path = typer.Argument(..., exists=True, file_okay=False),  # noqa: B008
+    title: str = typer.Option(..., "--title"),
+    author: str = typer.Option(..., "--author"),
+    narrator: str = typer.Option("", "--narrator"),
+    out: Path = typer.Option(..., "--out"),  # noqa: B008
+    cover: Path | None = typer.Option(None, "--cover", exists=True, dir_okay=False),  # noqa: B008
+    config: Path = typer.Option(Path("./config.toml"), "--config", exists=True),  # noqa: B008
+) -> None:
+    """Stage 5 — assemble final .m4b with chapter markers and tags."""
+    cfg = load_config(config)
+    _assemble(
+        work_dir,
+        title=title,
+        author=author,
+        narrator=narrator,
+        out_path=out,
+        bitrate_kbps=cfg.assemble.audio_bitrate_kbps,
+        cover_path=cover,
+    )
+    typer.echo(f"wrote {out}")
 
 
 @app.command("status")
