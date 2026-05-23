@@ -11,6 +11,7 @@ from audiobook.adapt import validate_adapted_dir as _validate_dir
 from audiobook.chunk import chunk_work_dir as _chunk_dir
 from audiobook.config import load_config
 from audiobook.parse import parse_epub as _parse_epub
+from audiobook.render import render_work_dir
 from audiobook.state import load_state
 from audiobook.voice import validate_voice_reference
 
@@ -37,6 +38,27 @@ def voice_validate(path: Path = typer.Argument(..., exists=True, dir_okay=False)
     if not r.ok:
         raise typer.Exit(1)
     typer.echo("ok")
+
+
+@voice_app.command("preview")
+def voice_preview(
+    reference: Path = typer.Argument(..., exists=True, dir_okay=False),  # noqa: B008
+    text: str = typer.Option(
+        "When we examine the architecture of a distributed system, three concerns dominate: "
+        "consistency, availability, and partition tolerance.",
+        "--text",
+    ),
+    out: Path = typer.Option(Path("./voice/preview.wav"), "--out"),  # noqa: B008
+) -> None:
+    """Render a 30-second preview using the supplied reference voice. HOST ONLY."""
+    import soundfile as sf
+
+    from audiobook.render import _load_chatterbox
+
+    _, tts = _load_chatterbox("mps")
+    samples, sr = tts(text, voice_conditioning=str(reference))
+    sf.write(str(out), samples, sr, subtype="PCM_16")
+    typer.echo(f"wrote {out}")
 
 
 @app.callback()
@@ -85,6 +107,18 @@ def chunk_cmd(
         section_silence_ms=cfg.chunk.section_silence_ms,
     )
     typer.echo(f"chunked {n} chapters")
+
+
+@app.command("render")
+def render_cmd(
+    work_dir: Path = typer.Argument(..., exists=True, file_okay=False),  # noqa: B008
+    voice: Path = typer.Option(Path("./voice/reference.wav"), exists=True, dir_okay=False),  # noqa: B008
+    config: Path = typer.Option(Path("./config.toml"), "--config", exists=True),  # noqa: B008
+) -> None:
+    """Stage 4 — render chunked text to WAVs. HOST ONLY (uses MPS)."""
+    cfg = load_config(config)
+    render_work_dir(work_dir, device=cfg.render.device, workers=cfg.render.workers, voice_path=voice)
+    typer.echo("render complete")
 
 
 @app.command("status")
