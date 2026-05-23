@@ -11,6 +11,7 @@ from audiobook.adapt import validate_adapted_dir as _validate_dir
 from audiobook.chunk import chunk_work_dir as _chunk_dir
 from audiobook.config import load_config
 from audiobook.parse import parse_epub as _parse_epub
+from audiobook.state import load_state
 
 app = typer.Typer(
     name="audiobook",
@@ -65,6 +66,17 @@ def chunk_cmd(
         section_silence_ms=cfg.chunk.section_silence_ms,
     )
     typer.echo(f"chunked {n} chapters")
+
+
+@app.command("status")
+def status(work_dir: Path = typer.Argument(..., exists=True, file_okay=False)) -> None:  # noqa: B008
+    """Print a human-readable summary of work/state.json."""
+    try:
+        state = load_state(work_dir)
+    except FileNotFoundError:
+        typer.echo("no state.json yet — nothing has run")
+        raise typer.Exit(0)
+    typer.echo(state.model_dump_json(indent=2))
 
 
 if __name__ == "__main__":
