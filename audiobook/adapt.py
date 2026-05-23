@@ -10,7 +10,7 @@ from typing import Literal
 
 from pydantic import ValidationError
 
-from audiobook.models import ChapterAdapted, ChapterRaw
+from audiobook.models import ChapterAdapted, ChapterRaw, PronunciationHint
 
 ErrorKind = Literal[
     "missing_file",
@@ -132,3 +132,39 @@ def validate_adapted_dir(work_dir: Path) -> ValidationReport:
         adapted_path = adapted_dir / raw_path.name
         report.results.append(validate_adapted_file(raw_path, adapted_path))
     return report
+
+
+def merge_pronunciation(work_dir: Path) -> Path:
+    """Combine all chapters' pronunciation_hints into work/pronunciation.json.
+
+    Deduplication policy: first occurrence wins for `spoken_as`; conflicting
+    later spellings are recorded in the `reason` field so the user can review.
+    """
+    work_dir = Path(work_dir)
+    adapted_dir = work_dir / "chapters" / "adapted"
+    merged: dict[str, PronunciationHint] = {}
+    conflicts: dict[str, set[str]] = {}
+
+    for f in sorted(adapted_dir.glob("*.json")):
+        try:
+            data = json.loads(f.read_text())
+            chapter = ChapterAdapted.model_validate(data)
+        except (json.JSONDecodeError, ValidationError):
+            continue
+        for h in chapter.pronunciation_hints:
+            if h.term not in merged:
+                merged[h.term] = h
+            elif merged[h.term].spoken_as != h.spoken_as:
+                conflicts.setdefault(h.term, set()).add(h.spoken_as)
+
+    out_list = []
+    for term, hint in merged.items():
+        reason = hint.reason
+        if term in conflicts:
+            alt = ", ".join(sorted(conflicts[term]))
+            reason = (reason + " " if reason else "") + f"[conflict with: {alt}]"
+        out_list.append({"term": hint.term, "spoken_as": hint.spoken_as, "reason": reason})
+
+    out = work_dir / "pronunciation.json"
+    out.write_text(json.dumps(out_list, indent=2) + "\n")
+    return out
