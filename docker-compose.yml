@@ -1,0 +1,13 @@
+services:
+  audiobook:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: audiobook:dev
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+    environment:
+      PYTHONUNBUFFERED: "1"
+    tty: true
+    stdin_open: true

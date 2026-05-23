@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# audiobook CLI dispatcher: routes render-stage subcommands to the host venv
+# (needs MPS via uv) and everything else to the Docker container.
+set -euo pipefail
+
+PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$PROJECT_DIR"
+
+sub1="${1:-}"
+sub2="${2:-}"
+
+run_host() {
+  if [[ ! -x .venv/bin/audiobook ]]; then
+    echo "host venv not found. Run scripts/host-install.sh first." >&2
+    exit 1
+  fi
+  exec uv run audiobook "$@"
+}
+
+run_docker() {
+  exec docker compose run --rm audiobook audiobook "$@"
+}
+
+case "$sub1" in
+  render)
+    run_host "$@"
+    ;;
+  voice)
+    if [[ "$sub2" == "preview" ]]; then
+      run_host "$@"
+    else
+      run_docker "$@"
+    fi
+    ;;
+  *)
+    run_docker "$@"
+    ;;
+esac

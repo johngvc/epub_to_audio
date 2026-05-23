@@ -1,0 +1,20 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+*.egg-info/
+build/
+dist/
+
+# Project working/output dirs
+input/
+voice/*.wav
+voice/preview.wav
+work/
+out/
+tests/_scratch/
+
+# Keep the tiny fixture
+!tests/fixtures/tiny.epub
