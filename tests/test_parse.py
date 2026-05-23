@@ -30,7 +30,6 @@ def test_parse_detects_features(repo_root: Path, scratch: Path) -> None:
     raw_dir = scratch / "chapters" / "raw"
     files = sorted(raw_dir.glob("*.json"))
     chapters = [ChapterRaw.model_validate_json(f.read_text()) for f in files]
-    by_index = {c.index: c for c in chapters}
     # tiny.epub: chapter 1 has <pre><code>; chapter 2 has <table>
     # Indexes start at 0 in our schema, but fixture uses 1-based chapter numbers in titles.
     # We assert by feature presence, not by exact index.

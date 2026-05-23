@@ -2,11 +2,11 @@ import pytest
 from pydantic import ValidationError
 
 from audiobook.models import (
-    ChapterRaw,
     ChapterAdapted,
-    PronunciationHint,
-    Chunk,
     ChapterChunks,
+    ChapterRaw,
+    Chunk,
+    PronunciationHint,
 )
 
 

@@ -6,8 +6,8 @@ from pathlib import Path
 import pytest
 
 from audiobook.adapt import (
-    validate_adapted_file,
     validate_adapted_dir,
+    validate_adapted_file,
 )
 from audiobook.models import ChapterRaw
 

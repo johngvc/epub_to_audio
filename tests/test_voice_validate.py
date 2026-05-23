@@ -39,7 +39,9 @@ def test_wrong_sample_rate_warns_not_fails(scratch: Path) -> None:
     _write_wav(p, duration_s=12, sr=48000, channels=2, amplitude=0.4)
     r = validate_voice_reference(p)
     # Resampling/downmix is automatic at use-time → warning, not failure
-    assert r.ok or any("resamp" in pr.lower() or "downmix" in pr.lower() for pr in r.problems + r.warnings)
+    assert r.ok or any(
+        "resamp" in pr.lower() or "downmix" in pr.lower() for pr in r.problems + r.warnings
+    )
 
 
 def test_clipping_detected(scratch: Path) -> None:

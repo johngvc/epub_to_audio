@@ -51,8 +51,8 @@ def _load_chatterbox(device: str) -> tuple[Any, TTSCallable]:
     host where the [render] extra is installed.
     """
     try:
-        import torch  # noqa: F401
-        from chatterbox.tts import ChatterboxTTS  # type: ignore[import-untyped]
+        import torch  # type: ignore[import-not-found]  # noqa: F401
+        from chatterbox.tts import ChatterboxTTS  # type: ignore[import-not-found]
     except ImportError as exc:
         raise RuntimeError(
             "Stage 4 requires the [render] extra. Run scripts/host-install.sh on the host."

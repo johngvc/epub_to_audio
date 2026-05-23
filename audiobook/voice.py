@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
-import soundfile as sf
+import soundfile as sf  # type: ignore[import-untyped]
 
 
 @dataclass(slots=True)
@@ -49,7 +49,8 @@ def validate_voice_reference(path: Path) -> VoiceValidationResult:
         res.problems.append(f"duration {duration:.1f}s below minimum {_MIN_DURATION_S}s")
     elif duration < _RECOMMENDED_MIN_S or duration > _RECOMMENDED_MAX_S:
         res.warnings.append(
-            f"duration {duration:.1f}s outside recommended {_RECOMMENDED_MIN_S}-{_RECOMMENDED_MAX_S}s"
+            f"duration {duration:.1f}s outside recommended "
+            f"{_RECOMMENDED_MIN_S}-{_RECOMMENDED_MAX_S}s"
         )
 
     if info.samplerate != _TARGET_SR:
@@ -61,7 +62,9 @@ def validate_voice_reference(path: Path) -> VoiceValidationResult:
 
     peak = float(np.max(np.abs(data))) if data.size else 0.0
     if peak >= 0.99:
-        res.warnings.append("audio is clipping (peak >= -0.1 dBFS); consider re-recording at lower gain")
+        res.warnings.append(
+            "audio is clipping (peak >= -0.1 dBFS); consider re-recording at lower gain"
+        )
     rms = float(np.sqrt(np.mean(data.astype(np.float32) ** 2))) if data.size else 0.0
     if rms < 1e-3:
         res.problems.append("recording is essentially silent")

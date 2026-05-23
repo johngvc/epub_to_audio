@@ -46,7 +46,7 @@ class ChapterChunks(_Strict):
     chunks: list[Chunk]
 
     @model_validator(mode="after")
-    def _unique_chunk_ids(self) -> "ChapterChunks":
+    def _unique_chunk_ids(self) -> ChapterChunks:
         ids = [c.id for c in self.chunks]
         if len(set(ids)) != len(ids):
             raise ValueError("chunk ids must be unique within a chapter")

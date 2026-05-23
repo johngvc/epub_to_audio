@@ -99,14 +99,22 @@ def chunk_chapter(
         packed = pack_sentences(list(sentences), max_chars=max_chars, min_orphan_chars=20)
         for i, ptext in enumerate(packed):
             is_last_in_paragraph = i == len(packed) - 1
-            trailing = paragraph_silence_ms if is_last_in_paragraph and p_i < len(paragraphs) - 1 else 0
+            trailing = (
+                paragraph_silence_ms if is_last_in_paragraph and p_i < len(paragraphs) - 1 else 0
+            )
             all_chunks.append(Chunk(id=f"{chunk_id:04d}", text=ptext, trailing_silence_ms=trailing))
             chunk_id += 1
 
     return ChapterChunks(index=index, title=title, chunks=all_chunks)
 
 
-def chunk_work_dir(work_dir: Path, *, max_chars: int, paragraph_silence_ms: int, section_silence_ms: int) -> int:
+def chunk_work_dir(
+    work_dir: Path,
+    *,
+    max_chars: int,
+    paragraph_silence_ms: int,
+    section_silence_ms: int,
+) -> int:
     """Chunk every adapted file in work_dir. Skips chapters whose chunks already exist."""
     work_dir = Path(work_dir)
     adapted_dir = work_dir / "chapters" / "adapted"

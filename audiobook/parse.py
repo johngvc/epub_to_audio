@@ -8,13 +8,13 @@ from pathlib import Path
 
 import ebooklib  # type: ignore[import-untyped]
 from bs4 import BeautifulSoup, Tag, XMLParsedAsHTMLWarning
-from ebooklib import epub  # type: ignore[import-untyped]
-from markdownify import markdownify  # type: ignore[import-untyped]
+from ebooklib import epub
+from markdownify import markdownify
 
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 
-from audiobook.models import ChapterRaw
-from audiobook.utils.slugify import slugify
+from audiobook.models import ChapterRaw  # noqa: E402
+from audiobook.utils.slugify import slugify  # noqa: E402
 
 _SKIP_PATTERNS = (
     re.compile(r"copyright", re.I),

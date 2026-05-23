@@ -5,7 +5,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-import soundfile as sf
+import soundfile as sf  # type: ignore[import-untyped]
 from mutagen.mp4 import MP4, MP4Cover
 
 
@@ -114,7 +114,10 @@ def assemble_book(
             check=True, capture_output=True,
         )
 
-    mp4 = MP4(str(out_path))
+    mp4 = MP4(str(out_path))  # type: ignore[no-untyped-call]
+    if mp4.tags is None:
+        mp4.add_tags()  # type: ignore[no-untyped-call]
+    assert mp4.tags is not None
     mp4.tags["\xa9nam"] = title
     mp4.tags["\xa9ART"] = author
     if narrator:

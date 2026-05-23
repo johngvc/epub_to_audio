@@ -52,7 +52,7 @@ def voice_preview(
     out: Path = typer.Option(Path("./voice/preview.wav"), "--out"),  # noqa: B008
 ) -> None:
     """Render a 30-second preview using the supplied reference voice. HOST ONLY."""
-    import soundfile as sf
+    import soundfile as sf  # type: ignore[import-untyped]
 
     from audiobook.render import _load_chatterbox
 
@@ -118,7 +118,9 @@ def render_cmd(
 ) -> None:
     """Stage 4 — render chunked text to WAVs. HOST ONLY (uses MPS)."""
     cfg = load_config(config)
-    render_work_dir(work_dir, device=cfg.render.device, workers=cfg.render.workers, voice_path=voice)
+    render_work_dir(
+        work_dir, device=cfg.render.device, workers=cfg.render.workers, voice_path=voice
+    )
     typer.echo("render complete")
 
 
@@ -153,7 +155,7 @@ def status(work_dir: Path = typer.Argument(..., exists=True, file_okay=False)) -
         state = load_state(work_dir)
     except FileNotFoundError:
         typer.echo("no state.json yet — nothing has run")
-        raise typer.Exit(0)
+        raise typer.Exit(0) from None
     typer.echo(state.model_dump_json(indent=2))
 
 

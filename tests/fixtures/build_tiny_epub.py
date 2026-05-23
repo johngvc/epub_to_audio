@@ -39,7 +39,9 @@ def build(out: Path) -> None:
         "ch02_code.xhtml",
         "Chapter 2: A Code Example",
         "<p>The following Python function illustrates recursion.</p>"
-        "<pre><code class=\"python\">def fact(n):\n    return 1 if n == 0 else n * fact(n-1)</code></pre>"
+        "<pre><code class=\"python\">"
+        "def fact(n):\n    return 1 if n == 0 else n * fact(n-1)"
+        "</code></pre>"
         "<p>The equation <span class=\"math\">n! = n * (n-1)!</span> captures the same idea.</p>",
     )
     c3 = _chapter(
