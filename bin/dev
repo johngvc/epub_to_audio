@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# Single-entry dev launcher:
+#   * starts colima on macOS if needed
+#   * builds the audiobook Docker image if it doesn't exist yet
+#   * opens a tmux session with a shell in one window and Claude Code
+#     (--dangerously-skip-permissions) in another
+#   * falls back to a plain shell when tmux is missing
+#
+# The pipeline itself does NOT need a long-running container — bin/audiobook
+# spawns one-shot `docker compose run --rm` containers per command. This
+# script just makes sure the image is ready before you start.
+set -euo pipefail
+
+SESSION="${TMUX_DEV_SESSION:-epub_to_audio}"
+PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+IMAGE="${AUDIOBOOK_IMAGE:-audiobook:dev}"
+
+for arg in "$@"; do
+  case "$arg" in
+    -h|--help)
+      cat <<USAGE
+Usage: bin/dev
+
+  Starts colima (macOS), ensures the ${IMAGE} Docker image exists
+  (builds it on first run), and opens a tmux session with a project
+  shell and a Claude Code window running with --dangerously-skip-permissions.
+
+Env vars:
+  TMUX_DEV_SESSION  tmux session name (default: epub_to_audio)
+  AUDIOBOOK_IMAGE   image tag to look for (default: audiobook:dev)
+  SKIP_BUILD=1      skip the image build check (assume the image exists)
+USAGE
+      exit 0 ;;
+  esac
+done
+
+is_mac() { [[ "$(uname -s)" == "Darwin" ]]; }
+have()   { command -v "$1" >/dev/null 2>&1; }
+
+ensure_colima() {
+  is_mac || return 0
+  have colima || return 0
+  if ! colima status >/dev/null 2>&1; then
+    echo "Starting colima..."
+    colima start
+  fi
+}
+
+ensure_image() {
+  [[ "${SKIP_BUILD:-0}" == "1" ]] && return 0
+  have docker || { echo "docker not found on PATH" >&2; return 1; }
+  if docker image inspect "$IMAGE" >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "Image '$IMAGE' not found — building (first run takes a few minutes)..."
+  (cd "$PROJECT_DIR" && docker compose build)
+}
+
+attach() {
+  if [[ -n "${TMUX:-}" ]]; then
+    exec tmux switch-client -t "$SESSION"
+  else
+    exec tmux attach-session -t "$SESSION"
+  fi
+}
+
+launch_tmux() {
+  if tmux has-session -t "$SESSION" 2>/dev/null; then
+    echo "tmux session '$SESSION' already exists; attaching."
+    attach
+  fi
+
+  cd "$PROJECT_DIR"
+
+  # Window 1: project shell.
+  tmux new-session -d -s "$SESSION" -n shell -c "$PROJECT_DIR"
+
+  # Window 2: Claude Code.
+  tmux new-window -t "$SESSION" -n claude -c "$PROJECT_DIR" \
+    "claude --dangerously-skip-permissions"
+
+  tmux select-window -t "${SESSION}:shell"
+  attach
+}
+
+ensure_colima
+ensure_image
+
+if have tmux; then
+  launch_tmux
+else
+  echo "tmux not found; staying in current shell." >&2
+  exec "${SHELL:-bash}"
+fi
