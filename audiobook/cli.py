@@ -12,12 +12,31 @@ from audiobook.chunk import chunk_work_dir as _chunk_dir
 from audiobook.config import load_config
 from audiobook.parse import parse_epub as _parse_epub
 from audiobook.state import load_state
+from audiobook.voice import validate_voice_reference
 
 app = typer.Typer(
     name="audiobook",
     help="EPUB-to-audiobook pipeline.",
     no_args_is_help=True,
 )
+
+voice_app = typer.Typer(name="voice", help="Voice reference utilities.")
+app.add_typer(voice_app)
+
+
+@voice_app.command("validate")
+def voice_validate(path: Path = typer.Argument(..., exists=True, dir_okay=False)) -> None:  # noqa: B008
+    r = validate_voice_reference(path)
+    typer.echo(f"path: {r.path}")
+    for k, v in r.info.items():
+        typer.echo(f"  {k}: {v}")
+    for p in r.problems:
+        typer.echo(f"PROBLEM: {p}")
+    for w in r.warnings:
+        typer.echo(f"warning: {w}")
+    if not r.ok:
+        raise typer.Exit(1)
+    typer.echo("ok")
 
 
 @app.callback()
