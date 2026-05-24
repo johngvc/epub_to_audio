@@ -7,14 +7,24 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+.DS_Store
 
 # Project working/output dirs
 input/
-voice/*.wav
-voice/preview.wav
+voice/*
+!voice/.gitkeep
 work/
 out/
 tests/_scratch/
+
+# Audio artifacts anywhere in the tree
+*.wav
+*.m4a
+*.m4b
+*.mp3
+*.flac
+*.aac
+*.ogg
 
 # Keep the tiny fixture
 !tests/fixtures/tiny.epub
