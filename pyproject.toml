@@ -21,6 +21,9 @@ dependencies = [
 render = [
     "torch>=2.3",
     "chatterbox-tts>=0.1.0",
+    # chatterbox-tts pulls in `perth`, which imports `pkg_resources`.
+    # setuptools>=81 dropped `pkg_resources` from the wheel — pin below that.
+    "setuptools<81",
 ]
 dev = [
     "pytest>=8.0",
