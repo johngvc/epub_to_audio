@@ -30,6 +30,12 @@ Verify `./work/chapters/raw/` is populated and `./work/book_full_text.md` exists
 
 ## Stage 2 — Adapt (your main job as orchestrator)
 
+**Two modes:**
+- `[adapt].mode = "agent"` (default) — you orchestrate via subagents, as documented below. Use this when running interactively in Claude Code.
+- `[adapt].mode = "api"` — set this and run `bin/audiobook adapt ./work` to drive the entire stage unattended against a local LM Studio (OpenAI-compatible) endpoint. Requires `[adapt.api].model` to be set and LM Studio to be running. The CLI handles concurrency, retries (up to 2 per chapter with validator error feedback), and the whole-book context decision automatically. Use this for headless runs.
+
+The numbered steps below describe the **agent-mode** workflow:
+
 1. Read `./prompts/adapt_system.md` once. This is the system prompt for every subagent.
 2. List all chapter files in `./work/chapters/raw/`.
 3. Skip any chapter that already has a valid `./work/chapters/adapted/NN_title.json`. Use `bin/audiobook validate-adapted ./work` to check.
