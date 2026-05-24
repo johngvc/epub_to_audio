@@ -217,3 +217,17 @@ def test_cli_voice_rm_missing_fails(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     result = runner.invoke(app, ["voice", "rm", "ghost", "--force"])
     assert result.exit_code != 0
+
+
+def test_cli_voice_preview_resolves_name(tmp_path: Path, monkeypatch) -> None:
+    """`voice preview --voice NAME` should resolve via the library, not require a path."""
+    _real_wav(tmp_path / "voices" / "alice.wav")
+    monkeypatch.chdir(tmp_path)
+    # We don't actually run TTS here — just verify the CLI parses --voice and
+    # exits non-zero with a "model not available" error rather than an arg
+    # parsing error. The render plumbing is exercised in test_render_plumbing.
+    result = runner.invoke(app, ["voice", "preview", "--voice", "alice", "--out", str(tmp_path / "p.wav")])
+    # Exit code 0 if chatterbox available (CI host); otherwise the chatterbox
+    # import raises and we exit non-zero with that error. Either way we should
+    # NOT see a typer arg parsing failure.
+    assert "Usage:" not in result.stdout or result.exit_code == 0

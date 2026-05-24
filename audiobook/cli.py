@@ -50,21 +50,38 @@ def voice_validate(path: Path = typer.Argument(..., exists=True, dir_okay=False)
 
 @voice_app.command("preview")
 def voice_preview(
-    reference: Path = typer.Argument(..., exists=True, dir_okay=False),  # noqa: B008
+    reference: Path | None = typer.Argument(None, exists=False, dir_okay=False),  # noqa: B008
+    voice: str | None = typer.Option(None, "--voice", help="Saved voice name OR path"),
     text: str = typer.Option(
-        "When we examine the architecture of a distributed system, three concerns dominate: "
-        "consistency, availability, and partition tolerance.",
+        "When we examine the architecture of a distributed system, three concerns "
+        "dominate: consistency, availability, and partition tolerance.",
         "--text",
     ),
     out: Path = typer.Option(Path("./voice/preview.wav"), "--out"),  # noqa: B008
+    config: Path = typer.Option(Path("./config.toml"), "--config"),  # noqa: B008
 ) -> None:
-    """Render a 30-second preview using the supplied reference voice. HOST ONLY."""
+    """Render a preview using the supplied reference voice. HOST ONLY.
+
+    The reference can come from (in order): positional REFERENCE path,
+    --voice NAME-or-PATH, or the library default. Use `audiobook voice list`
+    to see saved names.
+    """
     import soundfile as sf  # type: ignore[import-untyped]
 
     from audiobook.render import _load_chatterbox
+    from audiobook.voice_library import NoVoiceConfigured, resolve_voice_path
+
+    cfg = load_config(config) if config.exists() else load_config_default()
+    selector: str | None = voice or (str(reference) if reference else None)
+    try:
+        ref = resolve_voice_path(selector, cfg=cfg, project_root=Path.cwd())
+    except NoVoiceConfigured as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(2) from None
 
     _, tts = _load_chatterbox("mps")
-    samples, sr = tts(text, voice_conditioning=str(reference))
+    samples, sr = tts(text, voice_conditioning=str(ref))
+    out.parent.mkdir(parents=True, exist_ok=True)
     sf.write(str(out), samples, sr, subtype="PCM_16")
     typer.echo(f"wrote {out}")
 
