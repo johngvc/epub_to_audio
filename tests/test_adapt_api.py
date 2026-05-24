@@ -50,8 +50,16 @@ def _write_raw(scratch: Path, index: int, title: str, body: str) -> Path:
 
 
 class _FakeResponse:
-    def __init__(self, content: str, input_tokens: int = 100, output_tokens: int = 50):
-        self.choices = [type("C", (), {"message": type("M", (), {"content": content})()})()]
+    def __init__(
+        self,
+        content: str,
+        input_tokens: int = 100,
+        output_tokens: int = 50,
+        *,
+        reasoning_content: str | None = None,
+    ):
+        message = type("M", (), {"content": content, "reasoning_content": reasoning_content})()
+        self.choices = [type("C", (), {"message": message})()]
         self.usage = type("U", (), {
             "prompt_tokens": input_tokens,
             "completion_tokens": output_tokens,
@@ -219,6 +227,22 @@ model = "test-model"
     result = runner.invoke(app, ["adapt", str(scratch), "--config", str(cfg_path)])
     assert result.exit_code == 0, result.stdout
     assert "succeeded=1" in result.stdout or "succeeded: 1" in result.stdout
+    assert (scratch / "chapters" / "adapted" / "00_intro.json").exists()
+
+
+def test_reasoning_content_falls_back_when_content_is_empty(scratch: Path) -> None:
+    """LM Studio routes a reasoning model's full response into `reasoning_content`
+    while leaving `content` empty. We must fall back to it instead of failing."""
+    body = " ".join(["word"] * 50)
+    _write_raw(scratch, 0, "intro", body)
+    client = _FakeClient([
+        _FakeResponse(content="", reasoning_content=_valid_adapted_json(body))
+    ])
+    summary = run_adapt_api(
+        scratch, cfg=_make_cfg(), client_factory=lambda _api: client
+    )
+    assert summary.succeeded == ["00_intro"]
+    assert summary.failed == []
     assert (scratch / "chapters" / "adapted" / "00_intro.json").exists()
 
 

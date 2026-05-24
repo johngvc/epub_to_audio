@@ -6,7 +6,7 @@ narrator = ""
 skip_sections = ["copyright", "dedication", "index", "bibliography"]
 
 [adapt]
-mode = "agent"
+mode = "api"
 model_label = "claude-sonnet-4-6"
 concurrency = 8
 split_long_chapters_at_words = 6000
@@ -18,7 +18,7 @@ prompt_cache = true
 # Local OpenAI-compatible server (LM Studio defaults).
 # Override per-environment with OPENAI_BASE_URL / OPENAI_MODEL / OPENAI_API_KEY.
 base_url = "http://localhost:1234/v1"
-model = ""                     # e.g. "qwen2.5-14b-instruct"; LM Studio's loaded model
+model = "qwen3.5-9b-mlx"       # LM Studio's loaded model
 api_key = "lm-studio"          # LM Studio ignores this; sent to satisfy the SDK
 context_window = 16384         # used to decide whether to include book_full_text.md
 temperature = 0.3              # lower → more schema-compliant JSON

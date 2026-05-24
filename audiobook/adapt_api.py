@@ -10,6 +10,20 @@ from typing import Any
 
 from audiobook.adapt import validate_adapted_file
 from audiobook.config import AppConfig, ResolvedAdaptApi, resolve_adapt_api
+from audiobook.models import ChapterAdapted
+
+
+def _chapter_adapted_response_format() -> dict[str, Any]:
+    """LM Studio + OpenAI Structured Outputs: constrain the model to
+    produce JSON that matches ChapterAdapted's schema. Eliminates the
+    most common retry cause (schema_error)."""
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "ChapterAdapted",
+            "schema": ChapterAdapted.model_json_schema(),
+        },
+    }
 
 
 @dataclass(slots=True)
@@ -80,12 +94,15 @@ def _call_once(
     response = client.chat.completions.create(
         model=api.model,
         messages=messages,
-        response_format={"type": "json_object"},
+        response_format=_chapter_adapted_response_format(),
         temperature=api.temperature,
         max_tokens=api.max_output_tokens,
         timeout=api.request_timeout_s,
     )
-    content = response.choices[0].message.content or ""
+    message = response.choices[0].message
+    # LM Studio routes a reasoning model's output to `reasoning_content` even when
+    # the actual answer lives there; fall back so we don't lose the response.
+    content = message.content or getattr(message, "reasoning_content", None) or ""
     in_tok = getattr(response.usage, "prompt_tokens", 0) if response.usage else 0
     out_tok = getattr(response.usage, "completion_tokens", 0) if response.usage else 0
     return content, in_tok, out_tok
