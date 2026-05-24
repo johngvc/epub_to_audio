@@ -22,6 +22,9 @@ run_docker() {
 }
 
 case "$sub1" in
+  adapt)
+    run_host "$@"
+    ;;
   render)
     run_host "$@"
     ;;
