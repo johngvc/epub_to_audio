@@ -160,3 +160,30 @@ def test_rm_voice_removes_file_and_preview(tmp_path: Path) -> None:
 def test_rm_voice_missing_raises(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
         rm_voice("ghost", project_root=tmp_path)
+
+
+from typer.testing import CliRunner
+
+from audiobook.cli import app
+
+runner = CliRunner()
+
+
+def test_cli_voice_save_writes_to_library(tmp_path: Path, monkeypatch) -> None:
+    sample = _real_wav(tmp_path / "sample.wav")
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, ["voice", "save", str(sample), "--name", "alice"])
+    assert result.exit_code == 0, result.stdout
+    assert (tmp_path / "voices" / "alice.wav").is_file()
+
+
+def test_cli_voice_save_refuses_overwrite(tmp_path: Path, monkeypatch) -> None:
+    sample = _real_wav(tmp_path / "sample.wav")
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["voice", "save", str(sample), "--name", "alice"])
+    result = runner.invoke(app, ["voice", "save", str(sample), "--name", "alice"])
+    assert result.exit_code != 0
+    result2 = runner.invoke(
+        app, ["voice", "save", str(sample), "--name", "alice", "--force"]
+    )
+    assert result2.exit_code == 0, result2.stdout

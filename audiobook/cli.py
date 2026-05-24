@@ -62,6 +62,43 @@ def voice_preview(
     typer.echo(f"wrote {out}")
 
 
+@voice_app.command("save")
+def voice_save(
+    sample: Path = typer.Argument(..., exists=True, dir_okay=False),  # noqa: B008
+    name: str = typer.Option(..., "--name"),
+    force: bool = typer.Option(False, "--force"),
+    preview: bool = typer.Option(False, "--preview", help="Also generate voices/<name>.preview.wav"),
+) -> None:
+    """Convert a raw audio sample to 24 kHz mono PCM and save it as a named voice."""
+    from audiobook.voice_library import save_voice
+
+    project_root = Path.cwd()
+    try:
+        out = save_voice(sample, name=name, project_root=project_root, force=force)
+    except FileExistsError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from None
+    except (ValueError, FileNotFoundError, RuntimeError) as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(2) from None
+    typer.echo(f"wrote {out}")
+
+    if preview:
+        # Reuse the existing voice preview implementation.
+        from audiobook.render import _load_chatterbox  # type: ignore[no-untyped-call]
+        import soundfile as sf  # type: ignore[import-untyped]
+
+        preview_text = (
+            "When we examine the architecture of a distributed system, three "
+            "concerns dominate: consistency, availability, and partition tolerance."
+        )
+        _, tts = _load_chatterbox("mps")
+        samples, sr = tts(preview_text, voice_conditioning=str(out))
+        preview_path = out.with_suffix(".preview.wav")
+        sf.write(str(preview_path), samples, sr, subtype="PCM_16")
+        typer.echo(f"wrote {preview_path}")
+
+
 @app.callback()
 def _root() -> None:
     """Root callback (placeholder; subcommands attached in later tasks)."""
