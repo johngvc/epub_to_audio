@@ -1,7 +1,9 @@
 """TOML config loader with strict Pydantic validation."""
 from __future__ import annotations
 
+import os
 import tomllib
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
@@ -21,6 +23,16 @@ class BookConfig(_Strict):
     )
 
 
+class AdaptApiConfig(_Strict):
+    base_url: str = "http://localhost:1234/v1"
+    model: str = ""
+    api_key: str = "lm-studio"
+    context_window: int = Field(default=16384, ge=512)
+    temperature: float = Field(default=0.3, ge=0.0, le=2.0)
+    max_output_tokens: int = Field(default=8192, ge=256)
+    request_timeout_s: int = Field(default=600, ge=10)
+
+
 class AdaptConfig(_Strict):
     mode: Literal["agent", "chat", "api"] = "agent"
     model_label: str = "claude-sonnet-4-6"
@@ -29,6 +41,7 @@ class AdaptConfig(_Strict):
     max_tokens_per_call: int = 8192
     budget_usd: float = 15.0
     prompt_cache: bool = True
+    api: AdaptApiConfig = Field(default_factory=AdaptApiConfig)
 
 
 class ChunkConfig(_Strict):
@@ -65,3 +78,39 @@ def load_config(path: Path) -> AppConfig:
         return AppConfig.model_validate(data)
     except Exception as exc:
         raise ValueError(f"invalid config {path}: {exc}") from exc
+
+
+@dataclass(slots=True)
+class ResolvedAdaptApi:
+    base_url: str
+    model: str
+    api_key: str
+    context_window: int
+    temperature: float
+    max_output_tokens: int
+    request_timeout_s: int
+
+
+_ENV_MAP = {
+    "base_url": "OPENAI_BASE_URL",
+    "model": "OPENAI_MODEL",
+    "api_key": "OPENAI_API_KEY",
+}
+
+
+def resolve_adapt_api(cfg: AdaptApiConfig) -> ResolvedAdaptApi:
+    """Apply env-var overrides. Empty env values do NOT override config."""
+    overrides = {}
+    for field_name, env_name in _ENV_MAP.items():
+        env_val = os.environ.get(env_name, "")
+        if env_val:  # empty string = no override
+            overrides[field_name] = env_val
+    return ResolvedAdaptApi(
+        base_url=overrides.get("base_url", cfg.base_url),
+        model=overrides.get("model", cfg.model),
+        api_key=overrides.get("api_key", cfg.api_key),
+        context_window=cfg.context_window,
+        temperature=cfg.temperature,
+        max_output_tokens=cfg.max_output_tokens,
+        request_timeout_s=cfg.request_timeout_s,
+    )

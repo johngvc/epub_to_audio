@@ -14,6 +14,17 @@ max_tokens_per_call = 8192
 budget_usd = 15.0
 prompt_cache = true
 
+[adapt.api]
+# Local OpenAI-compatible server (LM Studio defaults).
+# Override per-environment with OPENAI_BASE_URL / OPENAI_MODEL / OPENAI_API_KEY.
+base_url = "http://localhost:1234/v1"
+model = ""                     # e.g. "qwen2.5-14b-instruct"; LM Studio's loaded model
+api_key = "lm-studio"          # LM Studio ignores this; sent to satisfy the SDK
+context_window = 16384         # used to decide whether to include book_full_text.md
+temperature = 0.3              # lower → more schema-compliant JSON
+max_output_tokens = 8192       # caps a single response
+request_timeout_s = 600        # generous; large chapters are slow on local GPU
+
 [chunk]
 max_chars = 400
 paragraph_silence_ms = 400
