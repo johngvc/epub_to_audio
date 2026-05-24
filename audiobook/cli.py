@@ -16,6 +16,13 @@ from audiobook.render import render_work_dir, validate_render_dir as _validate_r
 from audiobook.state import load_state
 from audiobook.voice import validate_voice_reference
 
+
+def load_config_default():
+    """Return a default AppConfig without reading from disk."""
+    from audiobook.config import AppConfig
+    return AppConfig()
+
+
 app = typer.Typer(
     name="audiobook",
     help="EPUB-to-audiobook pipeline.",
@@ -97,6 +104,47 @@ def voice_save(
         preview_path = out.with_suffix(".preview.wav")
         sf.write(str(preview_path), samples, sr, subtype="PCM_16")
         typer.echo(f"wrote {preview_path}")
+
+
+@voice_app.command("list")
+def voice_list(
+    config: Path = typer.Option(Path("./config.toml"), "--config"),  # noqa: B008
+) -> None:
+    """List saved voices. The voice that would be picked by an unflagged run is marked with *."""
+    from audiobook.voice_library import list_voices
+
+    cfg = load_config(config) if config.exists() else load_config_default()
+    items = list_voices(cfg=cfg, project_root=Path.cwd())
+    if not items:
+        typer.echo("(no saved voices — run `audiobook voice save SAMPLE --name NAME`)")
+        return
+    for v in items:
+        prefix = "*" if v.is_active_default else " "
+        size_kb = v.size_bytes // 1024
+        typer.echo(
+            f"{prefix} {v.name:20s} {v.duration_s:6.1f}s  {v.sample_rate:>6d} Hz  {size_kb:>5d} KB"
+        )
+
+
+@voice_app.command("rm")
+def voice_rm(
+    name: str = typer.Argument(...),
+    force: bool = typer.Option(False, "--force", help="Skip confirmation prompt"),
+) -> None:
+    """Remove a saved voice from the library."""
+    from audiobook.voice_library import rm_voice
+
+    if not force:
+        confirm = typer.confirm(f"delete voice '{name}'?")
+        if not confirm:
+            typer.echo("aborted")
+            raise typer.Exit(1)
+    try:
+        rm_voice(name, project_root=Path.cwd())
+    except FileNotFoundError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(2) from None
+    typer.echo(f"removed voices/{name}.wav")
 
 
 @app.callback()

@@ -187,3 +187,33 @@ def test_cli_voice_save_refuses_overwrite(tmp_path: Path, monkeypatch) -> None:
         app, ["voice", "save", str(sample), "--name", "alice", "--force"]
     )
     assert result2.exit_code == 0, result2.stdout
+
+
+def test_cli_voice_list_marks_active(tmp_path: Path, monkeypatch) -> None:
+    _real_wav(tmp_path / "voices" / "alice.wav")
+    _real_wav(tmp_path / "voices" / "default.wav")
+    monkeypatch.chdir(tmp_path)
+    # write a minimal config so load_config works
+    (tmp_path / "config.toml").write_text("[render]\nvoice = \"\"\n")
+    result = runner.invoke(app, ["voice", "list"])
+    assert result.exit_code == 0, result.stdout
+    assert "alice" in result.stdout
+    assert "default" in result.stdout
+    # The active default is marked with '*'
+    active_line = [line for line in result.stdout.splitlines() if line.startswith("*")]
+    assert active_line, f"expected a '*'-prefixed active line in:\n{result.stdout}"
+    assert "default" in active_line[0]
+
+
+def test_cli_voice_rm_removes_voice(tmp_path: Path, monkeypatch) -> None:
+    target = _real_wav(tmp_path / "voices" / "alice.wav")
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, ["voice", "rm", "alice", "--force"])
+    assert result.exit_code == 0, result.stdout
+    assert not target.exists()
+
+
+def test_cli_voice_rm_missing_fails(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, ["voice", "rm", "ghost", "--force"])
+    assert result.exit_code != 0
