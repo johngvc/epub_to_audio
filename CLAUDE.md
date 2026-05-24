@@ -13,11 +13,15 @@ This project uses one Docker container for stages 1, 2, 3, and 5, plus the host 
 ## Setup verification
 
 1. Confirm `./input/book.epub` exists. If missing, stop and ask the user.
-2. Confirm `./voice/reference.wav` exists. If a voice preview has not been generated for it:
+2. Confirm `./voice/reference.wav` exists. If the file is missing or in a non-WAV format (e.g. `.m4a` from Voice Memos), help the user convert:
+   - `afconvert -f WAVE -d LEI16@24000 -c 1 ./voice/input.m4a ./voice/reference.wav` (macOS, built in)
+   If a voice preview has not been generated for it:
    - Run: `bin/audiobook voice validate ./voice/reference.wav`
    - Run: `bin/audiobook voice preview ./voice/reference.wav`
    - Ask the user to listen to `./voice/preview.wav` and confirm before continuing.
-3. Read `config.toml` to confirm `adapt.mode = "agent"` and `adapt.concurrency` (default 8).
+3. Read `config.toml` and confirm:
+   - `[book].title` and `[book].author` are filled in (required for Stage 5). If empty, ask the user.
+   - `adapt.mode = "agent"` and note `adapt.concurrency` (default 8).
 
 ## Stage 1 — Parse
 
@@ -56,6 +60,8 @@ Then: `bin/audiobook validate-render ./work` to confirm no chunks failed quality
 ## Stage 5 — Assemble
 
 Run: `bin/audiobook assemble ./work --out ./out/book.m4b`
+
+This reads `[book].title`, `[book].author`, and `[book].narrator` from `config.toml`. To override per-run, pass `--title`, `--author`, and/or `--narrator`. To embed cover art, pass `--cover ./input/cover.jpg`.
 
 ## Reporting
 

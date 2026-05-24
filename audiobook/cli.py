@@ -12,7 +12,7 @@ from audiobook.assemble import assemble_book as _assemble
 from audiobook.chunk import chunk_work_dir as _chunk_dir
 from audiobook.config import load_config
 from audiobook.parse import parse_epub as _parse_epub
-from audiobook.render import render_work_dir
+from audiobook.render import render_work_dir, validate_render_dir as _validate_render_dir
 from audiobook.state import load_state
 from audiobook.voice import validate_voice_reference
 
@@ -124,18 +124,40 @@ def render_cmd(
     typer.echo("render complete")
 
 
+@app.command("validate-render")
+def validate_render(
+    work_dir: Path = typer.Argument(..., exists=True, file_okay=False),  # noqa: B008
+) -> None:
+    """Validate every chunk WAV under audio/chunks/. Emits JSON report on stdout."""
+    report = _validate_render_dir(work_dir)
+    typer.echo(report.to_json())
+    sys.exit(0 if report.ok else 1)
+
+
 @app.command("assemble")
 def assemble_cmd(
     work_dir: Path = typer.Argument(..., exists=True, file_okay=False),  # noqa: B008
-    title: str = typer.Option(..., "--title"),
-    author: str = typer.Option(..., "--author"),
-    narrator: str = typer.Option("", "--narrator"),
+    title: str = typer.Option("", "--title", help="Overrides [book].title in config.toml"),
+    author: str = typer.Option("", "--author", help="Overrides [book].author in config.toml"),
+    narrator: str = typer.Option(
+        "", "--narrator", help="Overrides [book].narrator in config.toml"
+    ),
     out: Path = typer.Option(..., "--out"),  # noqa: B008
     cover: Path | None = typer.Option(None, "--cover", exists=True, dir_okay=False),  # noqa: B008
     config: Path = typer.Option(Path("./config.toml"), "--config", exists=True),  # noqa: B008
 ) -> None:
     """Stage 5 — assemble final .m4b with chapter markers and tags."""
     cfg = load_config(config)
+    title = title or cfg.book.title
+    author = author or cfg.book.author
+    narrator = narrator or cfg.book.narrator
+    if not title or not author:
+        typer.echo(
+            "error: title and author required. Set [book].title and [book].author in "
+            "config.toml or pass --title/--author.",
+            err=True,
+        )
+        raise typer.Exit(2)
     _assemble(
         work_dir,
         title=title,

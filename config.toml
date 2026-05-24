@@ -1,4 +1,5 @@
 [book]
+# Required for `audiobook assemble` unless overridden via --title/--author/--narrator.
 title = ""
 author = ""
 narrator = ""
