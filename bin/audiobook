@@ -22,6 +22,10 @@ run_docker() {
 }
 
 case "$sub1" in
+  run)
+    shift
+    exec "$(dirname "$0")/audiobook-run" "$@"
+    ;;
   adapt)
     run_host "$@"
     ;;
@@ -29,11 +33,14 @@ case "$sub1" in
     run_host "$@"
     ;;
   voice)
-    if [[ "$sub2" == "preview" ]]; then
-      run_host "$@"
-    else
-      run_docker "$@"
-    fi
+    case "$sub2" in
+      preview|save|list|rm)
+        run_host "$@"
+        ;;
+      *)
+        run_docker "$@"
+        ;;
+    esac
     ;;
   *)
     run_docker "$@"
