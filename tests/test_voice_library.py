@@ -97,12 +97,14 @@ def _real_wav(path: Path, *, duration_s: float = 12.0, sr: int = 24000) -> Path:
 
 def test_save_voice_copies_wav_to_library(tmp_path: Path) -> None:
     sample = _real_wav(tmp_path / "voice" / "raw.wav", duration_s=12.0)
-    out = save_voice(sample, name="alice", project_root=tmp_path)
+    out, warnings = save_voice(sample, name="alice", project_root=tmp_path)
     assert out == tmp_path / "voices" / "alice.wav"
     assert out.is_file()
     info = sf.info(str(out))
     assert info.samplerate == 24000
     assert info.channels == 1
+    # Zero-amplitude WAV will fail SNR/loudness checks; warnings is a list.
+    assert isinstance(warnings, list)
 
 
 def test_save_voice_refuses_overwrite_without_force(tmp_path: Path) -> None:
@@ -111,7 +113,7 @@ def test_save_voice_refuses_overwrite_without_force(tmp_path: Path) -> None:
     with pytest.raises(FileExistsError):
         save_voice(sample, name="alice", project_root=tmp_path)
     # With force, succeeds
-    out = save_voice(sample, name="alice", project_root=tmp_path, force=True)
+    out, _w = save_voice(sample, name="alice", project_root=tmp_path, force=True)
     assert out.is_file()
 
 

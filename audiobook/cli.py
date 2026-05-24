@@ -98,7 +98,7 @@ def voice_save(
 
     project_root = Path.cwd()
     try:
-        out = save_voice(sample, name=name, project_root=project_root, force=force)
+        out, warnings = save_voice(sample, name=name, project_root=project_root, force=force)
     except FileExistsError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(2) from None
@@ -106,6 +106,8 @@ def voice_save(
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(2) from None
     typer.echo(f"wrote {out}")
+    for w in warnings:
+        typer.echo(f"warn: {w}", err=True)
 
     if preview:
         # Reuse the existing voice preview implementation.

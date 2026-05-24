@@ -102,6 +102,11 @@ run_stage() {
 # ---------- preflight ----------
 declare -a STAGE_TIMES=()
 
+# `mode` needs to be available to the stage chain even when --skip-preflight
+# bypasses the api-mode checks below. Read it unconditionally; an empty value
+# is fine (we treat it as "skip adapt").
+mode="$(read_toml_string "$CONFIG" adapt mode 2>/dev/null || true)"
+
 if (( ! SKIP_PREFLIGHT )); then
   info "preflight checks"
 
@@ -161,7 +166,7 @@ if (( ! SKIP_PREFLIGHT )); then
   fi
 
   # --- api mode: openai pkg + LM Studio ---
-  mode="$(read_toml_string "$CONFIG" adapt mode)"
+  # (`mode` was read above the preflight block — no need to re-read.)
   if [[ "$mode" == "agent" ]]; then
     err "\`bin/audiobook run\` cannot drive agent mode. Set [adapt].mode = \"api\" in $CONFIG"
     err "  Or use the interactive Claude Code workflow."

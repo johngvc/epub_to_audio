@@ -120,28 +120,32 @@ def _validate_name(name: str) -> None:
 def _convert_to_voice_wav(src: Path, dst: Path) -> None:
     """Convert any audio file to 24 kHz mono 16-bit PCM WAV.
 
-    Tries `afconvert` (macOS built-in) first, then `ffmpeg`. Raises if neither
+    Tries `afconvert` (macOS built-in) first, then `ffmpeg`. Raises ``RuntimeError``
+    with the underlying tool's stderr if conversion fails, or if neither tool
     is on PATH.
     """
     dst.parent.mkdir(parents=True, exist_ok=True)
-    if shutil.which("afconvert"):
-        subprocess.run(
-            ["afconvert", "-f", "WAVE", "-d", "LEI16@24000", "-c", "1",
-             str(src), str(dst)],
-            check=True, capture_output=True,
-        )
-        return
-    if shutil.which("ffmpeg"):
-        subprocess.run(
-            ["ffmpeg", "-y", "-i", str(src), "-ac", "1", "-ar", "24000",
-             "-acodec", "pcm_s16le", str(dst)],
-            check=True, capture_output=True,
-        )
-        return
-    raise RuntimeError(
-        "neither afconvert nor ffmpeg found on PATH. Install one to convert "
-        "voice samples. (macOS ships afconvert; otherwise `brew install ffmpeg`.)"
+    tool, cmd = (
+        ("afconvert", ["afconvert", "-f", "WAVE", "-d", "LEI16@24000", "-c", "1",
+                       str(src), str(dst)])
+        if shutil.which("afconvert")
+        else ("ffmpeg", ["ffmpeg", "-y", "-i", str(src), "-ac", "1", "-ar", "24000",
+                         "-acodec", "pcm_s16le", str(dst)])
+        if shutil.which("ffmpeg")
+        else (None, None)
     )
+    if tool is None:
+        raise RuntimeError(
+            "neither afconvert nor ffmpeg found on PATH. Install one to convert "
+            "voice samples. (macOS ships afconvert; otherwise `brew install ffmpeg`.)"
+        )
+    try:
+        subprocess.run(cmd, check=True, capture_output=True)
+    except subprocess.CalledProcessError as exc:
+        stderr = (exc.stderr or b"").decode(errors="replace").strip()
+        raise RuntimeError(
+            f"{tool} failed to convert {src}: {stderr or 'no stderr from tool'}"
+        ) from exc
 
 
 def save_voice(
@@ -150,11 +154,17 @@ def save_voice(
     name: str,
     project_root: Path,
     force: bool = False,
-) -> Path:
+) -> tuple[Path, list[str]]:
     """Convert `sample` to 24 kHz mono PCM and write voices/<name>.wav.
 
+    Returns ``(dst, warnings)`` where ``warnings`` is a list of human-readable
+    advisories from :func:`audiobook.voice.validate_voice_reference` (e.g.
+    "duration X outside recommended 10-20s"). The save still succeeds even when
+    warnings are present — they're advisory, not blocking.
+
     Raises ``ValueError`` for invalid names, ``FileExistsError`` if the
-    destination already exists and ``force`` is False.
+    destination already exists and ``force`` is False, ``RuntimeError`` if
+    audio conversion fails.
     """
     _validate_name(name)
     sample = Path(sample)
@@ -167,7 +177,13 @@ def save_voice(
             f"{dst} already exists. Pass force=True (or --force on the CLI) to overwrite."
         )
     _convert_to_voice_wav(sample, dst)
-    return dst
+
+    # Spec-defined validation pass (advisory only).
+    from audiobook.voice import validate_voice_reference
+
+    result = validate_voice_reference(dst)
+    warnings = list(result.problems) + list(result.warnings)
+    return dst, warnings
 
 
 def list_voices(*, cfg: AppConfig, project_root: Path) -> list[VoiceInfo]:
