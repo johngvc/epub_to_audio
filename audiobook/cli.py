@@ -262,13 +262,26 @@ def chunk_cmd(
 @app.command("render")
 def render_cmd(
     work_dir: Path = typer.Argument(..., exists=True, file_okay=False),  # noqa: B008
-    voice: Path = typer.Option(Path("./voice/reference.wav"), exists=True, dir_okay=False),  # noqa: B008
+    voice: str | None = typer.Option(None, "--voice", help="Saved voice name OR path"),
     config: Path = typer.Option(Path("./config.toml"), "--config", exists=True),  # noqa: B008
 ) -> None:
-    """Stage 4 — render chunked text to WAVs. HOST ONLY (uses MPS)."""
+    """Stage 4 — render chunked text to WAVs. HOST ONLY (uses MPS).
+
+    The voice can be a saved name (from `audiobook voice list`), an explicit
+    path, or omitted to fall back to [render].voice in config, voices/default.wav,
+    or legacy voice/reference.wav.
+    """
+    from audiobook.voice_library import NoVoiceConfigured, resolve_voice_path
+
     cfg = load_config(config)
+    try:
+        voice_path = resolve_voice_path(voice, cfg=cfg, project_root=Path.cwd())
+    except NoVoiceConfigured as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(2) from None
+
     render_work_dir(
-        work_dir, device=cfg.render.device, workers=cfg.render.workers, voice_path=voice
+        work_dir, device=cfg.render.device, workers=cfg.render.workers, voice_path=voice_path
     )
     typer.echo("render complete")
 

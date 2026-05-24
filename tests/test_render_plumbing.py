@@ -69,3 +69,38 @@ def test_render_writes_sidecar(scratch: Path) -> None:
     side = json.loads((out_dir / "0000.json").read_text())
     assert side["text"] == "hi"
     assert side["chunk_id"] == "0000"
+
+
+def test_cli_render_resolves_voice_name(tmp_path, monkeypatch):
+    """`render --voice NAME` should resolve via library; ensure the helper is invoked.
+
+    We monkeypatch render_work_dir so we don't actually run TTS.
+    """
+    import numpy as np
+    import soundfile as sf
+
+    # set up a fake project layout
+    voice = tmp_path / "voices" / "alice.wav"
+    voice.parent.mkdir(parents=True)
+    sf.write(str(voice), np.zeros(24_000, dtype=np.float32), 24_000, subtype="PCM_16")
+    (tmp_path / "config.toml").write_text("")
+    (tmp_path / "work").mkdir()
+
+    called = {}
+    import audiobook.cli as cli_mod
+
+    def fake_render(work_dir, *, device, workers, voice_path):
+        called["voice_path"] = voice_path
+        called["work_dir"] = work_dir
+
+    monkeypatch.setattr(cli_mod, "render_work_dir", fake_render)
+    monkeypatch.chdir(tmp_path)
+
+    from typer.testing import CliRunner
+
+    from audiobook.cli import app
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["render", "./work", "--voice", "alice"])
+    assert result.exit_code == 0, result.stdout
+    assert called["voice_path"] == voice
