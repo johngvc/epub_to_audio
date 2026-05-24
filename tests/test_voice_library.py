@@ -75,3 +75,88 @@ def test_resolve_path_with_separator_treated_as_path(tmp_path: Path) -> None:
 def test_resolve_path_with_separator_missing_raises(tmp_path: Path) -> None:
     with pytest.raises(NoVoiceConfigured):
         resolve_voice_path("missing/file.wav", cfg=_cfg(), project_root=tmp_path)
+
+
+import numpy as np
+import soundfile as sf
+
+from audiobook.voice_library import (
+    VoiceInfo,
+    list_voices,
+    rm_voice,
+    save_voice,
+)
+
+
+def _real_wav(path: Path, *, duration_s: float = 12.0, sr: int = 24000) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    samples = np.zeros(int(sr * duration_s), dtype=np.float32)
+    sf.write(str(path), samples, sr, subtype="PCM_16")
+    return path
+
+
+def test_save_voice_copies_wav_to_library(tmp_path: Path) -> None:
+    sample = _real_wav(tmp_path / "voice" / "raw.wav", duration_s=12.0)
+    out = save_voice(sample, name="alice", project_root=tmp_path)
+    assert out == tmp_path / "voices" / "alice.wav"
+    assert out.is_file()
+    info = sf.info(str(out))
+    assert info.samplerate == 24000
+    assert info.channels == 1
+
+
+def test_save_voice_refuses_overwrite_without_force(tmp_path: Path) -> None:
+    sample = _real_wav(tmp_path / "voice" / "raw.wav")
+    save_voice(sample, name="alice", project_root=tmp_path)
+    with pytest.raises(FileExistsError):
+        save_voice(sample, name="alice", project_root=tmp_path)
+    # With force, succeeds
+    out = save_voice(sample, name="alice", project_root=tmp_path, force=True)
+    assert out.is_file()
+
+
+def test_save_voice_rejects_invalid_name(tmp_path: Path) -> None:
+    sample = _real_wav(tmp_path / "voice" / "raw.wav")
+    for bad in ["", "with space", "with/slash", ".."]:
+        with pytest.raises(ValueError):
+            save_voice(sample, name=bad, project_root=tmp_path)
+
+
+def test_list_voices_returns_sorted_with_default_marked(tmp_path: Path) -> None:
+    _real_wav(tmp_path / "voices" / "alice.wav")
+    _real_wav(tmp_path / "voices" / "bob.wav")
+    _real_wav(tmp_path / "voices" / "default.wav")
+    cfg = _cfg()
+    items = list_voices(cfg=cfg, project_root=tmp_path)
+    assert [v.name for v in items] == ["alice", "bob", "default"]
+    is_default = {v.name: v.is_active_default for v in items}
+    assert is_default["default"] is True
+    assert is_default["alice"] is False
+
+
+def test_list_voices_marks_config_voice_as_default(tmp_path: Path) -> None:
+    _real_wav(tmp_path / "voices" / "alice.wav")
+    _real_wav(tmp_path / "voices" / "default.wav")
+    cfg = _cfg(voice="alice")
+    items = list_voices(cfg=cfg, project_root=tmp_path)
+    is_default = {v.name: v.is_active_default for v in items}
+    assert is_default["alice"] is True
+    assert is_default["default"] is False
+
+
+def test_list_voices_returns_empty_when_dir_missing(tmp_path: Path) -> None:
+    items = list_voices(cfg=_cfg(), project_root=tmp_path)
+    assert items == []
+
+
+def test_rm_voice_removes_file_and_preview(tmp_path: Path) -> None:
+    target = _real_wav(tmp_path / "voices" / "alice.wav")
+    preview = _real_wav(tmp_path / "voices" / "alice.preview.wav")
+    rm_voice("alice", project_root=tmp_path)
+    assert not target.exists()
+    assert not preview.exists()
+
+
+def test_rm_voice_missing_raises(tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError):
+        rm_voice("ghost", project_root=tmp_path)

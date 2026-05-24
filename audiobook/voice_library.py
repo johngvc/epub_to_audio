@@ -6,8 +6,14 @@ resolver picks one based on explicit arg, config, or fallback chain.
 from __future__ import annotations
 
 import os
+import re
+import shutil
+import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
+
+import soundfile as sf  # type: ignore[import-untyped]
 
 from audiobook.config import AppConfig
 
@@ -89,3 +95,125 @@ def resolve_voice_path(
         "to register one, then either pass `--voice NAME` or set "
         "[render].voice in config.toml."
     )
+
+
+@dataclass(slots=True)
+class VoiceInfo:
+    name: str
+    path: Path
+    duration_s: float
+    sample_rate: int
+    size_bytes: int
+    is_active_default: bool
+
+
+_VALID_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def _validate_name(name: str) -> None:
+    if not name or not _VALID_NAME.fullmatch(name):
+        raise ValueError(
+            f"invalid voice name {name!r}: use letters, digits, '-', or '_'."
+        )
+
+
+def _convert_to_voice_wav(src: Path, dst: Path) -> None:
+    """Convert any audio file to 24 kHz mono 16-bit PCM WAV.
+
+    Tries `afconvert` (macOS built-in) first, then `ffmpeg`. Raises if neither
+    is on PATH.
+    """
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if shutil.which("afconvert"):
+        subprocess.run(
+            ["afconvert", "-f", "WAVE", "-d", "LEI16@24000", "-c", "1",
+             str(src), str(dst)],
+            check=True, capture_output=True,
+        )
+        return
+    if shutil.which("ffmpeg"):
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", str(src), "-ac", "1", "-ar", "24000",
+             "-acodec", "pcm_s16le", str(dst)],
+            check=True, capture_output=True,
+        )
+        return
+    raise RuntimeError(
+        "neither afconvert nor ffmpeg found on PATH. Install one to convert "
+        "voice samples. (macOS ships afconvert; otherwise `brew install ffmpeg`.)"
+    )
+
+
+def save_voice(
+    sample: Path,
+    *,
+    name: str,
+    project_root: Path,
+    force: bool = False,
+) -> Path:
+    """Convert `sample` to 24 kHz mono PCM and write voices/<name>.wav.
+
+    Raises ``ValueError`` for invalid names, ``FileExistsError`` if the
+    destination already exists and ``force`` is False.
+    """
+    _validate_name(name)
+    sample = Path(sample)
+    if not sample.is_file():
+        raise FileNotFoundError(f"sample not found: {sample}")
+    project_root = Path(project_root)
+    dst = project_root / "voices" / f"{name}.wav"
+    if dst.exists() and not force:
+        raise FileExistsError(
+            f"{dst} already exists. Pass force=True (or --force on the CLI) to overwrite."
+        )
+    _convert_to_voice_wav(sample, dst)
+    return dst
+
+
+def list_voices(*, cfg: AppConfig, project_root: Path) -> list[VoiceInfo]:
+    """Return all voices in `voices/` sorted by name. The voice that would be
+    picked by `resolve_voice_path(None, cfg, project_root)` is marked
+    `is_active_default=True`.
+
+    Preview files (`<name>.preview.wav`) are filtered out.
+    """
+    project_root = Path(project_root)
+    voices_dir = project_root / "voices"
+    if not voices_dir.is_dir():
+        return []
+    try:
+        active = resolve_voice_path(None, cfg=cfg, project_root=project_root)
+    except NoVoiceConfigured:
+        active = None
+    items: list[VoiceInfo] = []
+    for path in sorted(voices_dir.glob("*.wav")):
+        if path.stem.endswith(".preview"):
+            continue
+        info = sf.info(str(path))
+        items.append(
+            VoiceInfo(
+                name=path.stem,
+                path=path,
+                duration_s=info.frames / info.samplerate if info.samplerate else 0.0,
+                sample_rate=info.samplerate,
+                size_bytes=path.stat().st_size,
+                is_active_default=(active == path),
+            )
+        )
+    return items
+
+
+def rm_voice(name: str, *, project_root: Path) -> None:
+    """Delete voices/<name>.wav and any voices/<name>.preview.wav.
+
+    Raises FileNotFoundError if the voice does not exist.
+    """
+    _validate_name(name)
+    project_root = Path(project_root)
+    target = project_root / "voices" / f"{name}.wav"
+    if not target.is_file():
+        raise FileNotFoundError(f"voice '{name}' not found at {target}")
+    target.unlink()
+    preview = project_root / "voices" / f"{name}.preview.wav"
+    if preview.is_file():
+        preview.unlink()
