@@ -1,43 +1,62 @@
+# =============================================================================
+# Audiobook pipeline configuration.
+# Sections marked "TWEAK" are the ones you'll most often want to change per
+# book or per setup. See README.md "How to use → Configuration" for details.
+# =============================================================================
+
 [book]
-# Required for `audiobook assemble` unless overridden via --title/--author/--narrator.
+# TWEAK — embedded in the final .m4b. Required for `audiobook assemble` unless
+# overridden via --title / --author / --narrator on the command line.
 title = ""
 author = ""
 narrator = ""
+# Chapters whose titles match these (case-insensitive) are dropped at parse.
 skip_sections = ["copyright", "dedication", "index", "bibliography"]
 
 [adapt]
+# TWEAK — "agent" lets Claude Code drive Stage 2 via subagents (interactive).
+#         "api"   drives Stage 2 unattended against an OpenAI-compatible server
+#                 (see [adapt.api] below). Use "api" for one-command runs.
 mode = "api"
-model_label = "claude-sonnet-4-6"
-concurrency = 8
+model_label = "claude-sonnet-4-6"   # informational, used in state.json
+concurrency = 8                     # parallel subagents in "agent" mode
 split_long_chapters_at_words = 6000
 max_tokens_per_call = 8192
-budget_usd = 15.0
-prompt_cache = true
+budget_usd = 15.0                   # informational in api mode
+prompt_cache = true                 # informational in api mode
 
 [adapt.api]
-# Local OpenAI-compatible server (LM Studio defaults).
-# Override per-environment with OPENAI_BASE_URL / OPENAI_MODEL / OPENAI_API_KEY.
+# TWEAK — endpoint and model for `mode = "api"`. Defaults assume LM Studio
+# running locally. Env vars OPENAI_BASE_URL / OPENAI_MODEL / OPENAI_API_KEY
+# override the corresponding fields below when set and non-empty.
 base_url = "http://localhost:1234/v1"
-model = "qwen3.5-9b-mlx"       # LM Studio's loaded model
-api_key = "lm-studio"          # LM Studio ignores this; sent to satisfy the SDK
-context_window = 16384         # used to decide whether to include book_full_text.md
-temperature = 0.3              # lower → more schema-compliant JSON
-max_output_tokens = 8192       # caps a single response
-request_timeout_s = 600        # generous; large chapters are slow on local GPU
+# Tested-good local models (see README "Picking a model"):
+#   qwen3.6-35b-a3b-mtp        ← recommended (fast + best format + recall)
+#   qwen3.6-35b-a3b-ud-mlx     ← 4-bit alt, same family
+#   gemma-4-26b-a4b-it         ← strong runner-up
+# Don't use: openai/gpt-oss-20b (produces placeholder garbage on this task)
+model = "qwen3.6-35b-a3b-mtp"
+api_key = "lm-studio"         # LM Studio ignores this; sent to satisfy the SDK
+context_window = 16384        # used to decide if book_full_text.md is included
+temperature = 0.3             # lower → more schema-compliant JSON
+max_output_tokens = 8192      # caps a single response
+request_timeout_s = 600       # generous; large chapters are slow on local GPU
 
 [chunk]
-max_chars = 400
+# Affects how the adapted text is sliced into TTS-sized pieces.
+max_chars = 400               # smaller → more stable TTS but more chunks
 paragraph_silence_ms = 400
 section_silence_ms = 1200
 
 [render]
-device = "mps"
-workers = 2
-exaggeration = 0.4
+# TWEAK — Stage 4 (TTS). Host-only.
+device = "mps"                # "mps" on Apple Silicon, "cuda" on NVIDIA, "cpu" elsewhere
+workers = 2                   # parallel render workers; 1-2 typical for one GPU
+exaggeration = 0.4            # Chatterbox: vocal expressiveness
 cfg_weight = 0.5
 temperature = 0.7
 multilingual = false
 
 [assemble]
-audio_bitrate_kbps = 64
+audio_bitrate_kbps = 64       # 64 is fine for spoken word; raise for music
 sample_rate_hz = 24000

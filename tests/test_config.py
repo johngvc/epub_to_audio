@@ -8,10 +8,13 @@ from audiobook.config import AppConfig, load_config
 def test_loads_repo_default(repo_root: Path) -> None:
     cfg = load_config(repo_root / "config.toml")
     assert isinstance(cfg, AppConfig)
-    assert cfg.adapt.mode == "agent"
+    # Repo default is "api" — unattended LM Studio path. See README.
+    assert cfg.adapt.mode == "api"
     assert cfg.adapt.concurrency == 8
     assert cfg.chunk.max_chars == 400
     assert cfg.render.workers == 2
+    assert cfg.adapt.api.base_url == "http://localhost:1234/v1"
+    assert cfg.adapt.api.model != ""  # must be set to a real model
 
 
 def test_rejects_unknown_section(tmp_path: Path) -> None:
