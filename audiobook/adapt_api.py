@@ -39,6 +39,58 @@ def _should_include_book_context(book_text: str, ctx_window: int) -> bool:
     return _estimate_tokens(book_text) <= int(ctx_window * 0.6)
 
 
+_SYSTEM_PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / "adapt_system.md"
+
+
+def _load_system_prompt() -> str:
+    return _SYSTEM_PROMPT_PATH.read_text()
+
+
+def _build_messages(
+    *,
+    system_prompt: str,
+    raw_chapter_json: str,
+    book_context: str | None,
+    last_error: tuple[str, str] | None,
+) -> list[dict[str, str]]:
+    user_parts = [f"Chapter to adapt (JSON):\n{raw_chapter_json}"]
+    if book_context:
+        user_parts.append(f"\nWhole-book context (markdown):\n{book_context}")
+    if last_error is not None:
+        kind, detail = last_error
+        user_parts.append(
+            f"\nPrevious attempt failed validation with:\n"
+            f"  error_kind: {kind}\n"
+            f"  detail: {detail}\n"
+            f"Please correct the issue and produce a valid response this time."
+        )
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": "\n".join(user_parts)},
+    ]
+
+
+def _call_once(
+    client: Any,
+    *,
+    api: ResolvedAdaptApi,
+    messages: list[dict[str, str]],
+) -> tuple[str, int, int]:
+    """Return (content, input_tokens, output_tokens)."""
+    response = client.chat.completions.create(
+        model=api.model,
+        messages=messages,
+        response_format={"type": "json_object"},
+        temperature=api.temperature,
+        max_tokens=api.max_output_tokens,
+        timeout=api.request_timeout_s,
+    )
+    content = response.choices[0].message.content or ""
+    in_tok = getattr(response.usage, "prompt_tokens", 0) if response.usage else 0
+    out_tok = getattr(response.usage, "completion_tokens", 0) if response.usage else 0
+    return content, in_tok, out_tok
+
+
 def run_adapt_api(
     work_dir: Path,
     *,
@@ -60,21 +112,77 @@ def run_adapt_api(
         summary.wall_seconds = time.monotonic() - started
         return summary
 
-    # Whole-book context decision (one-time).
     api = resolve_adapt_api(cfg.adapt.api)
     book_text_path = work_dir / "book_full_text.md"
     book_text = book_text_path.read_text() if book_text_path.exists() else ""
     summary.included_book_context = bool(book_text) and _should_include_book_context(
         book_text, api.context_window
     )
-    if progress:
-        if book_text and not summary.included_book_context:
-            progress(
-                f"book_full_text.md ~{_estimate_tokens(book_text)} tokens > "
-                f"60% of context_window={api.context_window}; skipping whole-book context"
-            )
+    if progress and book_text and not summary.included_book_context:
+        progress(
+            f"book_full_text.md ~{_estimate_tokens(book_text)} tokens > "
+            f"60% of context_window={api.context_window}; skipping whole-book context"
+        )
 
-    # Per-chapter loop comes in Task 4. For now: no-op.
-    _ = client_factory(api)  # validate factory is callable; not used yet
+    system_prompt = _load_system_prompt()
+    client = client_factory(api)
+    book_context = book_text if summary.included_book_context else None
+
+    for raw_path in raw_paths:
+        stem = raw_path.stem
+        adapted_path = adapted_dir / raw_path.name
+
+        # Idempotency: skip if already valid.
+        if adapted_path.exists():
+            outcome = validate_adapted_file(raw_path, adapted_path)
+            if outcome.ok:
+                summary.succeeded.append(stem)
+                if progress:
+                    progress(f"[{stem}] already valid; skipping")
+                continue
+
+        raw_json = raw_path.read_text()
+        last_error: tuple[str, str] | None = None
+        had_retry = False
+
+        for attempt in range(3):  # 1 initial + up to 2 retries
+            messages = _build_messages(
+                system_prompt=system_prompt,
+                raw_chapter_json=raw_json,
+                book_context=book_context,
+                last_error=last_error,
+            )
+            try:
+                content, in_tok, out_tok = _call_once(client, api=api, messages=messages)
+            except Exception as exc:
+                last_error = ("transport_error", str(exc))
+                had_retry = True
+                if progress:
+                    progress(f"[{stem}] attempt {attempt + 1} transport error: {exc}")
+                continue
+
+            summary.total_input_tokens += in_tok
+            summary.total_output_tokens += out_tok
+            adapted_path.write_text(content)
+
+            outcome = validate_adapted_file(raw_path, adapted_path)
+            if outcome.ok:
+                summary.succeeded.append(stem)
+                if had_retry:
+                    summary.retried.append(stem)
+                if progress:
+                    progress(f"[{stem}] ok on attempt {attempt + 1}")
+                break
+
+            last_error = (outcome.error_kind or "unknown", outcome.detail)
+            had_retry = True
+            if progress:
+                progress(f"[{stem}] attempt {attempt + 1} failed: {outcome.error_kind} — {outcome.detail}")
+        else:
+            # All attempts exhausted.
+            summary.failed.append((stem, f"{last_error[0]}: {last_error[1]}" if last_error else "unknown"))
+            # Remove the last bad write so the next run can retry cleanly.
+            adapted_path.unlink(missing_ok=True)
+
     summary.wall_seconds = time.monotonic() - started
     return summary
