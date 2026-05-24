@@ -4,10 +4,14 @@ import json
 from pathlib import Path
 
 import pytest
+from typer.testing import CliRunner
 
 from audiobook.adapt_api import AdaptRunSummary, run_adapt_api
+from audiobook.cli import app
 from audiobook.config import AppConfig, AdaptConfig, AdaptApiConfig
 from audiobook.models import ChapterRaw
+
+runner = CliRunner()
 
 
 def _make_cfg(**api_overrides) -> AppConfig:
@@ -179,3 +183,40 @@ def test_book_context_skipped_when_too_large(scratch: Path) -> None:
         m["content"] for m in client.calls[0]["messages"] if m["role"] == "user"
     )
     assert book_content not in user_content
+
+
+def test_cli_adapt_rejects_agent_mode(scratch: Path) -> None:
+    (scratch / "chapters" / "raw").mkdir(parents=True)
+    cfg_path = scratch / "config.toml"
+    cfg_path.write_text("""
+[adapt]
+mode = "agent"
+""")
+    result = runner.invoke(app, ["adapt", str(scratch), "--config", str(cfg_path)])
+    assert result.exit_code == 2
+    assert "external orchestrator" in result.stdout or "external orchestrator" in result.stderr
+
+
+def test_cli_adapt_runs_in_api_mode(scratch: Path, monkeypatch) -> None:
+    body = " ".join(["word"] * 50)
+    _write_raw(scratch, 0, "intro", body)
+    cfg_path = scratch / "config.toml"
+    cfg_path.write_text("""
+[adapt]
+mode = "api"
+
+[adapt.api]
+base_url = "http://localhost:1234/v1"
+model = "test-model"
+""")
+    # Patch the default factory used inside cli → adapt_api.
+    # Because run_adapt_api uses late-binding (client_factory=None, then resolved
+    # inside the function), monkeypatching the module attribute works at call time.
+    fake_client = _FakeClient([_FakeResponse(_valid_adapted_json(body))])
+    import audiobook.adapt_api as ax
+    monkeypatch.setattr(ax, "_default_client_factory", lambda _api: fake_client)
+
+    result = runner.invoke(app, ["adapt", str(scratch), "--config", str(cfg_path)])
+    assert result.exit_code == 0, result.stdout
+    assert "succeeded=1" in result.stdout or "succeeded: 1" in result.stdout
+    assert (scratch / "chapters" / "adapted" / "00_intro.json").exists()

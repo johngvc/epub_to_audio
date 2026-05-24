@@ -96,9 +96,17 @@ def run_adapt_api(
     *,
     cfg: AppConfig,
     progress: Callable[[str], None] | None = None,
-    client_factory: ClientFactory = _default_client_factory,
+    client_factory: ClientFactory | None = None,
 ) -> AdaptRunSummary:
-    """Drive Stage 2 (adapt) against an OpenAI-compatible API."""
+    """Drive Stage 2 (adapt) against an OpenAI-compatible API.
+
+    ``client_factory`` defaults to ``_default_client_factory`` when *None* so
+    that callers can monkeypatch ``audiobook.adapt_api._default_client_factory``
+    at test time without fighting Python's early-binding of default arguments.
+    """
+    if client_factory is None:
+        client_factory = _default_client_factory
+
     work_dir = Path(work_dir)
     raw_dir = work_dir / "chapters" / "raw"
     adapted_dir = work_dir / "chapters" / "adapted"

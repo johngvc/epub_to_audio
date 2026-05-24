@@ -77,6 +77,42 @@ def parse(
     typer.echo(f"parsed {len(chapters)} chapters -> {out}")
 
 
+@app.command("adapt")
+def adapt_cmd(
+    work_dir: Path = typer.Argument(..., exists=True, file_okay=False),  # noqa: B008
+    config: Path = typer.Option(Path("./config.toml"), "--config", exists=True),  # noqa: B008
+) -> None:
+    """Stage 2 — adapt chapters in-process (mode = "api"). Agent mode is
+    driven by an external orchestrator and cannot be run via this command."""
+    cfg = load_config(config)
+    if cfg.adapt.mode == "agent":
+        typer.echo(
+            "agent mode is driven by an external orchestrator (Claude Code). "
+            'Set [adapt].mode = "api" in config.toml to run unattended.',
+            err=True,
+        )
+        raise typer.Exit(2)
+    if cfg.adapt.mode != "api":
+        typer.echo(f"unsupported adapt mode: {cfg.adapt.mode}", err=True)
+        raise typer.Exit(2)
+
+    # Lazy import so non-api flows don't require the openai SDK to be installed.
+    from audiobook.adapt_api import run_adapt_api
+
+    summary = run_adapt_api(work_dir, cfg=cfg, progress=lambda line: typer.echo(line))
+    typer.echo(
+        f"adapt complete: succeeded={len(summary.succeeded)} "
+        f"retried={len(summary.retried)} failed={len(summary.failed)} "
+        f"tokens_in={summary.total_input_tokens} tokens_out={summary.total_output_tokens} "
+        f"book_context={'included' if summary.included_book_context else 'skipped'} "
+        f"wall_s={summary.wall_seconds:.1f}"
+    )
+    if summary.failed:
+        for stem, detail in summary.failed:
+            typer.echo(f"FAILED {stem}: {detail}", err=True)
+        raise typer.Exit(1)
+
+
 @app.command("validate-adapted")
 def validate_adapted(
     work_dir: Path = typer.Argument(..., exists=True, file_okay=False),  # noqa: B008
