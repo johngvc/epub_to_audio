@@ -15,6 +15,7 @@ voice/*
 !voice/.gitkeep
 work/
 out/
+scratch/
 tests/_scratch/
 
 # Audio artifacts anywhere in the tree
