@@ -98,6 +98,17 @@ def adapt_cmd(
 
     # Lazy import so non-api flows don't require the openai SDK to be installed.
     from audiobook.adapt_api import run_adapt_api
+    from audiobook.config import resolve_adapt_api
+
+    api = resolve_adapt_api(cfg.adapt.api)
+    if not api.model:
+        typer.echo(
+            "error: [adapt.api].model is empty. Set it in config.toml to the name "
+            "of the model loaded in LM Studio (e.g. \"qwen2.5-14b-instruct\"), "
+            "or override with the OPENAI_MODEL env var.",
+            err=True,
+        )
+        raise typer.Exit(2)
 
     summary = run_adapt_api(work_dir, cfg=cfg, progress=lambda line: typer.echo(line))
     typer.echo(

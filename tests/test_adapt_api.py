@@ -220,3 +220,20 @@ model = "test-model"
     assert result.exit_code == 0, result.stdout
     assert "succeeded=1" in result.stdout or "succeeded: 1" in result.stdout
     assert (scratch / "chapters" / "adapted" / "00_intro.json").exists()
+
+
+def test_cli_adapt_errors_when_model_is_empty(scratch: Path) -> None:
+    (scratch / "chapters" / "raw").mkdir(parents=True)
+    cfg_path = scratch / "config.toml"
+    cfg_path.write_text("""
+[adapt]
+mode = "api"
+
+[adapt.api]
+base_url = "http://localhost:1234/v1"
+model = ""
+""")
+    result = runner.invoke(app, ["adapt", str(scratch), "--config", str(cfg_path)])
+    assert result.exit_code == 2
+    combined = (result.stdout or "") + (result.stderr or "")
+    assert "[adapt.api].model" in combined
