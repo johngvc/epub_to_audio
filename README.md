@@ -84,14 +84,26 @@ Listen to `voice/preview.wav`. If it sounds wrong, re-record before spending hou
 
 ### 5. Run the pipeline
 
+**One command:**
+
+```sh
+bin/audiobook run
+```
+
+Defaults: reads `./input/book.epub`, writes `./out/book.m4b`, uses `./work` as the work directory, reads `./config.toml`. Override any of these with `--out`, `--work`, `--config`, `--voice`. Pass `--fresh` to wipe the work directory first, or `--skip-preflight` to bypass dependency checks.
+
+The orchestrator auto-installs anything it needs: starts Colima on macOS, builds the Docker image, creates the host venv, installs the `[api]` extra. It then runs all 8 stages in sequence (parse → adapt → validate-adapted → merge-pronunciation → chunk → render → validate-render → assemble), aborting on the first failure with a hint to resume. Re-running picks up where the previous run stopped (every stage is idempotent).
+
+**Or run each stage manually:**
+
 ```sh
 bin/audiobook parse ./input/book.epub --out ./work
-bin/audiobook adapt ./work                    # Stage 2 (api mode) — calls LM Studio
-bin/audiobook validate-adapted ./work         # JSON gate: all chapters valid?
+bin/audiobook adapt ./work
+bin/audiobook validate-adapted ./work
 bin/audiobook merge-pronunciation ./work
-bin/audiobook chunk ./work                    # Stage 3
-bin/audiobook render ./work                   # Stage 4 — host MPS, 2-4 hr for 500pp
-bin/audiobook validate-render ./work          # gate: any chunk WAV empty?
+bin/audiobook chunk ./work
+bin/audiobook render ./work --voice default
+bin/audiobook validate-render ./work
 bin/audiobook assemble ./work --out ./out/book.m4b
 ```
 
@@ -106,6 +118,33 @@ If a chapter sounds off when read aloud, before re-rendering:
 3. Edit either by hand, OR delete the file and re-run the prior stage.
 
 The pipeline is idempotent — every stage skips chapters/chunks whose outputs already exist and pass validation. `bin/audiobook adapt ./work` re-runs only the missing/invalid chapters.
+
+### Working with voices
+
+Saved voices live in `voices/<name>.wav` (24 kHz mono PCM). Raw recordings can stay in `voice/` — they're separate from the curated library.
+
+| Command | What it does |
+|---|---|
+| `bin/audiobook voice save SAMPLE --name NAME` | Converts a raw sample to 24 kHz mono PCM and saves it as `voices/NAME.wav`. Add `--force` to overwrite, `--preview` to also generate a sample audio file. |
+| `bin/audiobook voice list` | Lists all saved voices with duration / sample rate / size. The one that `audiobook run` would pick by default is marked with `*`. |
+| `bin/audiobook voice rm NAME` | Deletes a saved voice. |
+| `bin/audiobook voice preview --voice NAME` | Generates a 30-second preview using a saved voice. Also accepts a path. |
+| `bin/audiobook voice validate PATH` | Checks an arbitrary audio file's format/duration/SNR/clipping. |
+
+**Picking a voice for a run:**
+
+```sh
+bin/audiobook run --voice grandpa             # uses voices/grandpa.wav
+```
+
+Or pin a default in `config.toml`:
+
+```toml
+[render]
+voice = "grandpa"
+```
+
+Resolution order: `--voice` arg → `[render].voice` config → `voices/default.wav` → `voice/reference.wav` (legacy).
 
 ### Configuration reference
 
@@ -176,17 +215,21 @@ Claude Code reads `CLAUDE.md` and runs the pipeline interactively, dispatching o
 ## Direct command reference
 
 ```sh
-bin/audiobook parse INPUT.epub --out ./work          # Docker — Stage 1
-bin/audiobook adapt ./work                           # Host  — Stage 2 (api mode)
-bin/audiobook validate-adapted ./work                # Docker — Stage 2 gate
-bin/audiobook merge-pronunciation ./work             # Docker
-bin/audiobook chunk ./work                           # Docker — Stage 3
-bin/audiobook voice validate ./voice/reference.wav   # Docker
-bin/audiobook voice preview ./voice/reference.wav    # Host (MPS)
-bin/audiobook render ./work                          # Host (MPS) — Stage 4
-bin/audiobook validate-render ./work                 # Docker — per-chunk WAV check
-bin/audiobook assemble ./work --out ./out/book.m4b   # Docker — Stage 5
-bin/audiobook status ./work                          # Read work/state.json
+bin/audiobook run [INPUT_EPUB]                        # All stages, auto-install, strict failure
+bin/audiobook parse INPUT.epub --out ./work           # Docker — Stage 1
+bin/audiobook adapt ./work                            # Host  — Stage 2 (api mode)
+bin/audiobook validate-adapted ./work                 # Docker — Stage 2 gate
+bin/audiobook merge-pronunciation ./work              # Docker
+bin/audiobook chunk ./work                            # Docker — Stage 3
+bin/audiobook voice save SAMPLE --name NAME           # Host — add a voice to the library
+bin/audiobook voice list                              # Host — list saved voices
+bin/audiobook voice rm NAME                           # Host — remove a saved voice
+bin/audiobook voice validate ./voice/reference.wav    # Docker — check format/SNR
+bin/audiobook voice preview --voice NAME              # Host (MPS) — preview a saved voice
+bin/audiobook render ./work --voice NAME              # Host (MPS) — Stage 4
+bin/audiobook validate-render ./work                  # Docker — per-chunk WAV check
+bin/audiobook assemble ./work --out ./out/book.m4b    # Docker — Stage 5
+bin/audiobook status ./work                           # Read work/state.json
 ```
 
 ## Development
