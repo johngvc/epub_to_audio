@@ -13,6 +13,7 @@ def test_loads_repo_default(repo_root: Path) -> None:
     assert cfg.adapt.concurrency == 8
     assert cfg.chunk.max_chars == 400
     assert cfg.render.workers == 2
+    assert cfg.render.voice == ""   # default is empty; resolver picks the right file
     assert cfg.adapt.api.base_url == "http://localhost:1234/v1"
     assert cfg.adapt.api.model != ""  # must be set to a real model
 

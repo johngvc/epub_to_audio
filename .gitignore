@@ -18,6 +18,10 @@ out/
 scratch/
 tests/_scratch/
 
+# Saved voices library
+voices/*
+!voices/.gitkeep
+
 # Audio artifacts anywhere in the tree
 *.wav
 *.m4a

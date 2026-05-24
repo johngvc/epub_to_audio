@@ -50,6 +50,7 @@ section_silence_ms = 1200
 
 [render]
 # TWEAK — Stage 4 (TTS). Host-only.
+voice = ""                    # saved voice name; empty = voices/default.wav, then voice/reference.wav (legacy)
 device = "mps"                # "mps" on Apple Silicon, "cuda" on NVIDIA, "cpu" elsewhere
 workers = 2                   # parallel render workers; 1-2 typical for one GPU
 exaggeration = 0.4            # Chatterbox: vocal expressiveness

@@ -51,6 +51,7 @@ class ChunkConfig(_Strict):
 
 
 class RenderConfig(_Strict):
+    voice: str = ""             # saved voice name; empty = voices/default.wav fallback chain
     device: str = "mps"
     workers: int = Field(default=2, ge=1, le=8)
     exaggeration: float = 0.4
