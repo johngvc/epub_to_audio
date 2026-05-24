@@ -12,15 +12,50 @@ from audiobook.models import ChapterAdapted, ChapterChunks, Chunk, Pronunciation
 _SEGMENTER = pysbd.Segmenter(language="en", clean=False)
 
 
+def sanitize_spoken_as(value: str) -> str:
+    """Normalize a pronunciation hint's `spoken_as` so the TTS engine doesn't
+    read literal dashes or dictionary-style stress marks.
+
+    Even with explicit prompting, every local model we tested produced
+    stress-mark patterns like `MEER-ah` or `BYAR-neh stroo-stroop` for hard
+    foreign words. The TTS reads dashes literally and may over-emphasize
+    ALL-CAPS runs, so we normalize:
+
+    - `-` and `_` → space (TTS reads them otherwise)
+    - lowercase the whole value when it's mixed-case (the stress-mark pattern),
+      preserving pure ALL-CAPS like ``MIT`` and pure lowercase like
+      ``cube control`` unchanged
+    - collapse runs of whitespace
+
+    Examples:
+        ``MEER-ah``             → ``meer ah``
+        ``BYAR-neh stroo-stroop`` → ``byar neh stroo stroop``
+        ``MIT``                 → ``MIT``
+        ``cube control``        → ``cube control``
+    """
+    has_upper = any(c.isupper() for c in value)
+    has_lower = any(c.islower() for c in value)
+    if has_upper and has_lower:
+        value = value.lower()
+    value = re.sub(r"[-_]+", " ", value)
+    value = re.sub(r"\s+", " ", value).strip()
+    return value
+
+
 def apply_pronunciation(text: str, hints: list[PronunciationHint]) -> str:
     """Whole-word find-replace. Case-sensitive for terms that are all-uppercase
-    (acronyms) or mixed-case (CLI tool names); case-insensitive otherwise."""
+    (acronyms) or mixed-case (CLI tool names); case-insensitive otherwise.
+
+    `spoken_as` is sanitized via :func:`sanitize_spoken_as` before substitution
+    so TTS-hostile artifacts (dashes, stress marks) never reach Chatterbox.
+    """
     result = text
     for h in hints:
         case_sensitive = h.term != h.term.lower()
         pattern = r"\b" + re.escape(h.term) + r"\b"
         flags = 0 if case_sensitive else re.IGNORECASE
-        result = re.sub(pattern, h.spoken_as, result, flags=flags)
+        cleaned = sanitize_spoken_as(h.spoken_as)
+        result = re.sub(pattern, cleaned, result, flags=flags)
     return result
 
 
