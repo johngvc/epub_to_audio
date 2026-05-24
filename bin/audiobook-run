@@ -1,0 +1,259 @@
+#!/usr/bin/env bash
+# audiobook-run — autonomous pipeline orchestrator.
+# Runs parse → adapt → validate-adapted → merge-pronunciation → chunk →
+# render → validate-render → assemble in sequence. Auto-installs missing
+# dependencies during preflight. Strict failure: any non-zero exit aborts.
+set -euo pipefail
+
+PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$PROJECT_DIR"
+
+# ---------- defaults ----------
+INPUT="./input/book.epub"
+OUT="./out/book.m4b"
+WORK="./work"
+CONFIG="./config.toml"
+VOICE=""
+FRESH=0
+SKIP_PREFLIGHT=0
+FORCE=0
+mode=""
+
+# ---------- helpers ----------
+if [[ -t 1 ]]; then
+  BOLD=$'\e[1m'; CYAN=$'\e[36m'; GREEN=$'\e[32m'; RED=$'\e[31m'; YELLOW=$'\e[33m'; RESET=$'\e[0m'
+else
+  BOLD=""; CYAN=""; GREEN=""; RED=""; YELLOW=""; RESET=""
+fi
+
+err()  { echo "${RED}error:${RESET} $*" >&2; }
+warn() { echo "${YELLOW}warn:${RESET} $*" >&2; }
+info() { echo "${CYAN}→${RESET} $*"; }
+ok()   { echo "${GREEN}✓${RESET} $*"; }
+
+usage() {
+  cat <<EOF
+Usage: bin/audiobook run [INPUT_EPUB] [OPTIONS]
+
+Runs the full pipeline end-to-end. Auto-installs missing dependencies.
+
+Arguments:
+  INPUT_EPUB        Path to input EPUB (default: ./input/book.epub)
+
+Options:
+  --out PATH        Output .m4b path (default: ./out/book.m4b)
+  --work DIR        Work directory (default: ./work)
+  --config FILE     Config file (default: ./config.toml)
+  --voice NAME      Saved voice name OR path to a WAV
+  --fresh           Wipe work/ before starting (confirms unless --force)
+  --skip-preflight  Skip dependency checks
+  --force           Skip confirmations
+  -h, --help        Show this message
+EOF
+}
+
+# ---------- arg parsing ----------
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --out)            OUT="$2"; shift 2 ;;
+    --work)           WORK="$2"; shift 2 ;;
+    --config)         CONFIG="$2"; shift 2 ;;
+    --voice)          VOICE="$2"; shift 2 ;;
+    --fresh)          FRESH=1; shift ;;
+    --skip-preflight) SKIP_PREFLIGHT=1; shift ;;
+    --force)          FORCE=1; shift ;;
+    -h|--help)        usage; exit 0 ;;
+    -*)               err "unknown option: $1"; usage; exit 2 ;;
+    *)                INPUT="$1"; shift ;;
+  esac
+done
+
+read_toml_string() {
+  # crude TOML reader: read_toml_string FILE 'section' 'key'
+  local file="$1" section="$2" key="$3"
+  awk -v sec="[$section]" -v k="$key" '
+    $0 == sec { in_sec=1; next }
+    /^\[/      { in_sec=0 }
+    in_sec && $1 == k {
+      sub(/^[^=]*=[ \t]*/, "")
+      gsub(/^"|"$/, "")
+      print
+      exit
+    }
+  ' "$file"
+}
+
+run_stage() {
+  local stage_num="$1" stage_name="$2"; shift 2
+  echo ""
+  echo "${BOLD}=== Stage ${stage_num}/8 — ${stage_name} ===${RESET}"
+  local t0 t1 elapsed
+  t0=$(date +%s)
+  if ! "$@"; then
+    err "stage '${stage_name}' failed. Re-run \`bin/audiobook run\` to resume from here."
+    exit 1
+  fi
+  t1=$(date +%s)
+  elapsed=$(( t1 - t0 ))
+  STAGE_TIMES+=("${stage_name}:${elapsed}")
+  ok "${stage_name} (${elapsed}s)"
+}
+
+# ---------- preflight ----------
+declare -a STAGE_TIMES=()
+
+if (( ! SKIP_PREFLIGHT )); then
+  info "preflight checks"
+
+  # --- EPUB input ---
+  if [[ ! -f "$INPUT" ]]; then
+    err "EPUB not found: $INPUT"
+    exit 1
+  fi
+
+  # --- voices/ dir ---
+  mkdir -p voices
+
+  # --- voice resolvable (best-effort: rely on python resolver during render) ---
+  # If no voices/* and no voice/reference.wav, but voice/ has a sample, hint.
+  if [[ -z "$VOICE" ]] && \
+     ! ls voices/*.wav >/dev/null 2>&1 && \
+     [[ ! -f voice/reference.wav ]]; then
+    local_sample="$(ls voice/* 2>/dev/null | grep -vE '\.gitkeep|preview' | head -n 1 || true)"
+    if [[ -n "$local_sample" ]]; then
+      warn "no voice in voices/, but found $local_sample"
+      warn "  Run: bin/audiobook voice save \"$local_sample\" --name default"
+      exit 1
+    fi
+    err "no voice configured. Run: bin/audiobook voice save SAMPLE --name default"
+    exit 1
+  fi
+
+  # --- book metadata ---
+  title="$(read_toml_string "$CONFIG" book title)"
+  author="$(read_toml_string "$CONFIG" book author)"
+  if [[ -z "$title" || -z "$author" ]]; then
+    err "[book].title and [book].author must be set in $CONFIG"
+    err "  See README.md → How to use → Configuration reference"
+    exit 1
+  fi
+
+  # --- macOS: Colima ---
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    if command -v colima >/dev/null 2>&1; then
+      if ! colima status >/dev/null 2>&1; then
+        info "starting Colima"
+        colima start
+      fi
+    fi
+  fi
+
+  # --- Docker image ---
+  if ! docker image inspect audiobook:dev >/dev/null 2>&1; then
+    info "building Docker image (~3 min, first run only)"
+    docker compose build audiobook
+  fi
+
+  # --- host venv ---
+  if [[ ! -x .venv/bin/audiobook ]]; then
+    info "creating host venv (~2 min)"
+    scripts/host-install.sh
+  fi
+
+  # --- api mode: openai pkg + LM Studio ---
+  mode="$(read_toml_string "$CONFIG" adapt mode)"
+  if [[ "$mode" == "agent" ]]; then
+    err "\`bin/audiobook run\` cannot drive agent mode. Set [adapt].mode = \"api\" in $CONFIG"
+    err "  Or use the interactive Claude Code workflow."
+    exit 1
+  fi
+  if [[ "$mode" == "api" ]]; then
+    if ! .venv/bin/python -c "import openai" >/dev/null 2>&1; then
+      info "installing [api] extra (openai SDK)"
+      uv pip install --python .venv/bin/python -e ".[api]" >/dev/null
+    fi
+
+    base_url="$(read_toml_string "$CONFIG" adapt.api base_url)"
+    model="$(read_toml_string "$CONFIG" adapt.api model)"
+    base_url="${OPENAI_BASE_URL:-$base_url}"
+    model="${OPENAI_MODEL:-$model}"
+
+    if [[ -z "$model" ]]; then
+      err "[adapt.api].model is empty in $CONFIG (or via OPENAI_MODEL)"
+      exit 1
+    fi
+    if ! curl -sf --max-time 5 "${base_url%/}/models" >/dev/null; then
+      err "LM Studio not reachable at $base_url"
+      err "  Start LM Studio and load the model: $model"
+      exit 1
+    fi
+    if ! curl -s --max-time 5 "${base_url%/}/models" \
+         | grep -q "\"id\": *\"${model//\//\\/}\""; then
+      err "model '$model' not loaded in LM Studio at $base_url"
+      err "  Load it in LM Studio, then re-run."
+      exit 1
+    fi
+  fi
+
+  ok "preflight ok"
+fi
+
+# ---------- fresh ----------
+if (( FRESH )); then
+  if (( ! FORCE )); then
+    read -r -p "wipe ${WORK}/ ? [y/N] " yn
+    [[ "$yn" =~ ^[Yy]$ ]] || { err "aborted"; exit 1; }
+  fi
+  rm -rf "$WORK"
+  info "wiped $WORK"
+fi
+
+# ---------- pipeline ----------
+START_T=$(date +%s)
+
+run_stage 1 parse                bin/audiobook parse "$INPUT" --out "$WORK"
+
+if [[ "$mode" == "api" ]]; then
+  if [[ -n "$VOICE" ]]; then
+    run_stage 2 adapt               bin/audiobook adapt "$WORK" --config "$CONFIG"
+  else
+    run_stage 2 adapt               bin/audiobook adapt "$WORK" --config "$CONFIG"
+  fi
+fi
+
+run_stage 3 validate-adapted     bin/audiobook validate-adapted "$WORK"
+run_stage 4 merge-pronunciation  bin/audiobook merge-pronunciation "$WORK"
+run_stage 5 chunk                bin/audiobook chunk "$WORK" --config "$CONFIG"
+
+if [[ -n "$VOICE" ]]; then
+  run_stage 6 render             bin/audiobook render "$WORK" --voice "$VOICE" --config "$CONFIG"
+else
+  run_stage 6 render             bin/audiobook render "$WORK" --config "$CONFIG"
+fi
+
+run_stage 7 validate-render      bin/audiobook validate-render "$WORK"
+run_stage 8 assemble             bin/audiobook assemble "$WORK" --out "$OUT" --config "$CONFIG"
+
+END_T=$(date +%s)
+TOTAL=$(( END_T - START_T ))
+
+# ---------- summary ----------
+echo ""
+ok "Audiobook ready: $OUT"
+if [[ -f "$OUT" ]]; then
+  size_bytes=$(stat -f%z "$OUT" 2>/dev/null || stat -c%s "$OUT" 2>/dev/null || echo 0)
+  size_kb=$(( size_bytes / 1024 ))
+  echo "   size:     ${size_kb} KB"
+  if command -v afinfo >/dev/null 2>&1; then
+    dur=$(afinfo "$OUT" 2>/dev/null | awk -F': ' '/estimated duration/ {print $2}' | awk '{printf "%.0f", $1}')
+    [[ -n "$dur" ]] && echo "   duration: ${dur}s"
+  fi
+fi
+echo ""
+echo "Per-stage wall time:"
+for entry in "${STAGE_TIMES[@]}"; do
+  name="${entry%:*}"
+  secs="${entry#*:}"
+  printf "  %-22s %4ds\n" "$name" "$secs"
+done
+printf "  %-22s %4ds\n" "total" "$TOTAL"
