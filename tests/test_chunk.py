@@ -5,6 +5,7 @@ from audiobook.chunk import (
     chunk_chapter,
     pack_sentences,
     sanitize_spoken_as,
+    split_long_sentence,
 )
 from audiobook.models import ChapterAdapted, ChapterChunks, PronunciationHint
 
@@ -79,6 +80,36 @@ def test_pack_sentences_under_max_chars() -> None:
     assert all(len(c) <= 80 for c in chunks)
     # X. should be merged into the previous chunk (short orphan rule)
     assert not any(c == "X." for c in chunks)
+
+
+def test_split_long_sentence_at_clause_boundaries() -> None:
+    # 410-char sentence with commas — pronunciation expansion can produce this.
+    sent = (
+        "And he does more than explain the principles of D D D. The latter portion "
+        "of the book shares some important practices that have evolved from D D D, "
+        "such as EventStorming, addresses the problem of evolving the business focus "
+        "or organization and how this might affect the software, and discusses how "
+        "D D D aligns with microservices and how you can integrate it with a slew "
+        "of well-known software patterns."
+    )
+    parts = split_long_sentence(sent, max_chars=400)
+    assert len(parts) >= 2
+    assert all(len(p) <= 400 for p in parts)
+    # Roundtripping the joined parts should preserve the original text.
+    assert " ".join(parts).replace("  ", " ") == sent.replace("  ", " ")
+
+
+def test_split_long_sentence_no_separators_falls_back_to_whitespace() -> None:
+    sent = "word " * 100  # 500 chars, no clause separators
+    parts = split_long_sentence(sent.strip(), max_chars=100)
+    assert all(len(p) <= 100 for p in parts)
+
+
+def test_pack_sentences_handles_oversize_input() -> None:
+    """A sentence larger than max_chars must not produce an oversize chunk."""
+    big = "alpha, " * 80  # 560 chars, splittable on commas
+    chunks = pack_sentences([big.strip().rstrip(",")], max_chars=400, min_orphan_chars=20)
+    assert all(len(c) <= 400 for c in chunks)
 
 
 def test_chunk_chapter_writes_expected_structure() -> None:

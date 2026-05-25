@@ -59,13 +59,56 @@ def apply_pronunciation(text: str, hints: list[PronunciationHint]) -> str:
     return result
 
 
+def split_long_sentence(sent: str, max_chars: int) -> list[str]:
+    """Split a sentence longer than ``max_chars`` at clause boundaries.
+
+    Tries comma/semicolon/colon first (keeps natural pause points), then falls
+    back to splitting at the last whitespace before the boundary. Pronunciation
+    expansion (e.g. "DDD" → "D D D") can push an otherwise-fine sentence over
+    the limit, so we cannot assume the segmenter already gave us ≤max_chars
+    pieces.
+    """
+    sent = sent.strip()
+    if len(sent) <= max_chars:
+        return [sent]
+    parts = re.split(r"(?<=[,;:])\s+", sent)
+    packed: list[str] = []
+    buf: list[str] = []
+    buf_len = 0
+    for p in parts:
+        if buf_len + len(p) + (1 if buf else 0) > max_chars and buf:
+            packed.append(" ".join(buf))
+            buf, buf_len = [p], len(p)
+        else:
+            buf.append(p)
+            buf_len += len(p) + (1 if len(buf) > 1 else 0)
+    if buf:
+        packed.append(" ".join(buf))
+    # Anything still oversize (no usable clause separator) → split at whitespace.
+    final: list[str] = []
+    for piece in packed:
+        while len(piece) > max_chars:
+            cut = piece.rfind(" ", 0, max_chars)
+            if cut <= 0:
+                cut = max_chars
+            final.append(piece[:cut].rstrip())
+            piece = piece[cut:].lstrip()
+        if piece:
+            final.append(piece)
+    return final
+
+
 def pack_sentences(sentences: list[str], max_chars: int, min_orphan_chars: int) -> list[str]:
-    """Greedy-pack sentences into chunks ≤ max_chars without splitting sentences.
+    """Greedy-pack sentences into chunks ≤ max_chars.
 
     Sentences shorter than ``min_orphan_chars`` are merged with the next chunk
     so a tiny "X." doesn't end up alone (Chatterbox handles short utterances
-    poorly).
+    poorly). Sentences longer than ``max_chars`` are split at clause boundaries
+    via :func:`split_long_sentence` before packing.
     """
+    expanded: list[str] = []
+    for sent in sentences:
+        expanded.extend(split_long_sentence(sent, max_chars))
     chunks: list[str] = []
     buf: list[str] = []
     buf_len = 0
@@ -78,7 +121,7 @@ def pack_sentences(sentences: list[str], max_chars: int, min_orphan_chars: int) 
             buf = []
             buf_len = 0
 
-    for sent in sentences:
+    for sent in expanded:
         s = sent.strip()
         if not s:
             continue
