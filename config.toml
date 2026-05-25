@@ -7,9 +7,9 @@
 [book]
 # TWEAK — embedded in the final .m4b. Required for `audiobook assemble` unless
 # overridden via --title / --author / --narrator on the command line.
-title = ""
-author = ""
-narrator = ""
+title = "Learning Domain-Driven Design"
+author = "Vlad Khononov"
+narrator = "johngvc"
 # Chapters whose titles match these (case-insensitive) are dropped at parse.
 skip_sections = ["copyright", "dedication", "index", "bibliography"]
 
