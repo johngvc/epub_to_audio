@@ -7,6 +7,7 @@ when a transform is ambiguous, prefer leaving the text alone.
 from __future__ import annotations
 
 import re
+from collections import Counter
 from collections.abc import Callable
 from functools import lru_cache
 
@@ -72,3 +73,39 @@ def dehyphenate(text: str, *, is_word: Callable[[str], bool] | None = None) -> s
         return f"{left}-{right}"
 
     return _HYPHEN_BREAK_RE.sub(_join, text)
+
+
+_PAGE_NUMBER_RE = re.compile(r"^\s*\d{1,4}\s*$")
+_HEADER_REPEAT_THRESHOLD = 3
+_HEADER_MAX_LEN = 60
+
+
+def strip_page_artifacts(text: str) -> str:
+    """Remove orphan page-number lines and repeated short running headers/footers
+    that survived extraction.
+
+    - Orphan page numbers: a line that is nothing but 1–4 digits.
+    - Running headers/footers: a short (<60 char), non-heading line that recurs
+      `_HEADER_REPEAT_THRESHOLD`+ times is treated as boilerplate and dropped
+      at every occurrence. Markdown headings (`#…`) are never dropped.
+    """
+    lines = text.splitlines()
+
+    counts: Counter[str] = Counter(
+        ln.strip()
+        for ln in lines
+        if ln.strip()
+        and not ln.lstrip().startswith("#")
+        and len(ln.strip()) <= _HEADER_MAX_LEN
+    )
+    repeated = {s for s, n in counts.items() if n >= _HEADER_REPEAT_THRESHOLD}
+
+    kept: list[str] = []
+    for ln in lines:
+        stripped = ln.strip()
+        if _PAGE_NUMBER_RE.match(ln):
+            continue
+        if stripped in repeated:
+            continue
+        kept.append(ln)
+    return "\n".join(kept)

@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from audiobook.pdf_cleanup import collapse_whitespace, dehyphenate, normalize_punctuation
+from audiobook.pdf_cleanup import (
+    collapse_whitespace,
+    dehyphenate,
+    normalize_punctuation,
+    strip_page_artifacts,
+)
 
 
 def test_normalize_smart_quotes_to_ascii() -> None:
@@ -35,3 +40,31 @@ def test_dehyphenate_keeps_genuine_compounds() -> None:
 
 def test_dehyphenate_preserves_normal_text() -> None:
     assert dehyphenate("no hyphen breaks here", is_word=lambda w: True) == "no hyphen breaks here"
+
+
+def test_strip_orphan_page_numbers() -> None:
+    text = "End of a paragraph.\n42\nStart of the next paragraph."
+    assert strip_page_artifacts(text) == "End of a paragraph.\nStart of the next paragraph."
+
+
+def test_strip_repeated_running_headers() -> None:
+    # A short line repeated >= 3 times (a running header) is dropped everywhere.
+    text = "\n".join(
+        [
+            "CHAPTER TITLE",
+            "Real body line one.",
+            "CHAPTER TITLE",
+            "Real body line two.",
+            "CHAPTER TITLE",
+            "Real body line three.",
+        ]
+    )
+    assert strip_page_artifacts(text) == (
+        "Real body line one.\nReal body line two.\nReal body line three."
+    )
+
+
+def test_strip_keeps_markdown_headings_and_long_lines() -> None:
+    # Headings (start with #) and long lines are never treated as artifacts.
+    text = "# Chapter One\n# Chapter One\n# Chapter One\nbody"
+    assert strip_page_artifacts(text) == text
