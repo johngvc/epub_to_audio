@@ -23,6 +23,12 @@ class BookConfig(_Strict):
     )
 
 
+class ParseConfig(_Strict):
+    parser: Literal["auto", "pymupdf", "marker"] = "auto"
+    footnote_policy: Literal["inline", "endnote", "skip"] = "skip"
+    chapter_level: int | None = Field(default=None, ge=1, le=6)
+
+
 class AdaptApiConfig(_Strict):
     base_url: str = "http://localhost:1234/v1"
     model: str = ""
@@ -67,6 +73,7 @@ class AssembleConfig(_Strict):
 
 class AppConfig(_Strict):
     book: BookConfig = Field(default_factory=BookConfig)
+    parse: ParseConfig = Field(default_factory=ParseConfig)
     adapt: AdaptConfig = Field(default_factory=AdaptConfig)
     chunk: ChunkConfig = Field(default_factory=ChunkConfig)
     render: RenderConfig = Field(default_factory=RenderConfig)

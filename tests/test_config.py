@@ -85,3 +85,28 @@ model = "configured-model"
     cfg = load_config(cfg_path)
     resolved = resolve_adapt_api(cfg.adapt.api)
     assert resolved.model == "configured-model"
+
+
+def test_parse_config_defaults_and_override(tmp_path) -> None:
+    from audiobook.config import load_config
+
+    cfg_path = tmp_path / "c.toml"
+    cfg_path.write_text(
+        '[book]\ntitle = "T"\nauthor = "A"\n'
+        '[parse]\nparser = "pymupdf"\nfootnote_policy = "endnote"\nchapter_level = 2\n'
+    )
+    cfg = load_config(cfg_path)
+    assert cfg.parse.parser == "pymupdf"
+    assert cfg.parse.footnote_policy == "endnote"
+    assert cfg.parse.chapter_level == 2
+
+
+def test_parse_config_defaults_when_absent(tmp_path) -> None:
+    from audiobook.config import load_config
+
+    cfg_path = tmp_path / "c.toml"
+    cfg_path.write_text('[book]\ntitle = "T"\nauthor = "A"\n')
+    cfg = load_config(cfg_path)
+    assert cfg.parse.parser == "auto"
+    assert cfg.parse.footnote_policy == "skip"
+    assert cfg.parse.chapter_level is None

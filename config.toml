@@ -13,6 +13,12 @@ narrator = "johngvc"
 # Chapters whose titles match these (case-insensitive) are dropped at parse.
 skip_sections = ["copyright", "dedication", "index", "bibliography"]
 
+[parse]
+# PDF ingestion (ignored for EPUB input).
+parser = "auto"            # "auto" | "pymupdf" | "marker" (marker deferred to a future release)
+footnote_policy = "skip"   # "inline" | "endnote" | "skip"
+# chapter_level = 1        # force the heading level used as chapter boundaries (1-6)
+
 [adapt]
 # TWEAK — "agent" lets Claude Code drive Stage 2 via subagents (interactive).
 #         "api"   drives Stage 2 unattended against an OpenAI-compatible server
