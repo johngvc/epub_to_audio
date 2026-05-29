@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from audiobook.pdf_cleanup import (
+    apply_footnote_policy,
+    clean_pdf_markdown,
     collapse_whitespace,
     dehyphenate,
     normalize_punctuation,
@@ -68,3 +70,26 @@ def test_strip_keeps_markdown_headings_and_long_lines() -> None:
     # Headings (start with #) and long lines are never treated as artifacts.
     text = "# Chapter One\n# Chapter One\n# Chapter One\nbody"
     assert strip_page_artifacts(text) == text
+
+
+def test_footnote_policy_skip_removes_definitions() -> None:
+    text = "Body text.\n[1] A footnote definition.\nMore body."
+    assert apply_footnote_policy(text, "skip") == "Body text.\nMore body."
+
+
+def test_footnote_policy_inline_leaves_text_untouched() -> None:
+    text = "Body text.\n[1] A footnote definition.\nMore body."
+    assert apply_footnote_policy(text, "inline") == text
+
+
+def test_footnote_policy_endnote_moves_to_end() -> None:
+    text = "Body text.\n[^1]: A footnote definition.\nMore body."
+    expected = "Body text.\nMore body.\n\n---\n\n## Notes\n\n[^1]: A footnote definition."
+    assert apply_footnote_policy(text, "endnote") == expected
+
+
+def test_clean_pdf_markdown_runs_full_pipeline() -> None:
+    vocab = {"retrieval"}
+    raw = "“re-\ntrieval”\n\n\n42\nbody"
+    out = clean_pdf_markdown(raw, footnote_policy="skip", is_word=vocab.__contains__)
+    assert out == '"retrieval"\n\nbody'

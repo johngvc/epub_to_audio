@@ -10,6 +10,7 @@ import re
 from collections import Counter
 from collections.abc import Callable
 from functools import lru_cache
+from typing import Literal
 
 _PUNCT_MAP = {
     "“": '"',
@@ -109,3 +110,53 @@ def strip_page_artifacts(text: str) -> str:
             continue
         kept.append(ln)
     return "\n".join(kept)
+
+
+FootnotePolicy = Literal["inline", "endnote", "skip"]
+
+# Markdown-ish footnote *definition* lines: "[1] …" or "[^1]: …" at line start.
+_FOOTNOTE_DEF_RE = re.compile(r"^\s*\[\^?\d+\]:?\s+\S")
+
+
+def apply_footnote_policy(text: str, policy: FootnotePolicy) -> str:
+    """Handle footnote definition lines per policy.
+
+    - inline: leave them in place (read where they appear).
+    - skip:   drop them entirely (default for fiction).
+    - endnote: move them to a "Notes" section at the end (default for nonfiction).
+
+    Detection is heuristic over Tier-1 Markdown; precise extraction is a Tier-2
+    (marker) concern, deferred to a future release.
+    """
+    if policy == "inline":
+        return text
+
+    body: list[str] = []
+    notes: list[str] = []
+    for line in text.splitlines():
+        if _FOOTNOTE_DEF_RE.match(line):
+            notes.append(line.strip())
+        else:
+            body.append(line)
+
+    result = "\n".join(body)
+    if policy == "endnote" and notes:
+        result = result + "\n\n---\n\n## Notes\n\n" + "\n".join(notes)
+    return result
+
+
+def clean_pdf_markdown(
+    text: str,
+    *,
+    footnote_policy: FootnotePolicy = "skip",
+    is_word: Callable[[str], bool] | None = None,
+) -> str:
+    """Full deterministic cleanup, in dependency order: de-hyphenate (needs the
+    original line breaks) -> normalize punctuation -> strip page artifacts ->
+    apply footnote policy -> collapse whitespace."""
+    text = dehyphenate(text, is_word=is_word)
+    text = normalize_punctuation(text)
+    text = strip_page_artifacts(text)
+    text = apply_footnote_policy(text, footnote_policy)
+    text = collapse_whitespace(text)
+    return text
