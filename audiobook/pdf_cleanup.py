@@ -154,6 +154,9 @@ def clean_pdf_markdown(
     """Full deterministic cleanup, in dependency order: de-hyphenate (needs the
     original line breaks) -> normalize punctuation -> strip page artifacts ->
     apply footnote policy -> collapse whitespace."""
+    # Normalize line endings up front so de-hyphenation (which keys on "\n")
+    # works on CRLF-extracted PDFs too.
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
     text = dehyphenate(text, is_word=is_word)
     text = normalize_punctuation(text)
     text = strip_page_artifacts(text)

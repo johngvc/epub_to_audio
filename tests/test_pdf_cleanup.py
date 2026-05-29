@@ -93,3 +93,12 @@ def test_clean_pdf_markdown_runs_full_pipeline() -> None:
     raw = "“re-\ntrieval”\n\n\n42\nbody"
     out = clean_pdf_markdown(raw, footnote_policy="skip", is_word=vocab.__contains__)
     assert out == '"retrieval"\n\nbody'
+
+
+def test_footnote_policy_endnote_with_no_notes_returns_body() -> None:
+    assert apply_footnote_policy("Just body.", "endnote") == "Just body."
+
+
+def test_clean_pdf_markdown_normalizes_crlf_before_dehyphenating() -> None:
+    vocab = {"retrieval"}
+    assert clean_pdf_markdown("re-\r\ntrieval", is_word=vocab.__contains__) == "retrieval"
