@@ -211,6 +211,11 @@ def parse(
     suffix = input_path.suffix.lower()
     if suffix == ".epub":
         chapters = _parse_epub(input_path, out)
+        if not chapters:
+            typer.echo(
+                "warning: 0 chapters extracted — check the input or [book].skip_sections.",
+                err=True,
+            )
         typer.echo(f"parsed {len(chapters)} chapters -> {out}")
         return
     if suffix == ".pdf":
@@ -231,6 +236,11 @@ def parse(
         except PdfParseError as exc:
             typer.echo(f"error: {exc}", err=True)
             raise typer.Exit(1) from exc
+        if not chapters:
+            typer.echo(
+                "warning: 0 chapters extracted — check the input or [book].skip_sections.",
+                err=True,
+            )
         typer.echo(f"parsed {len(chapters)} chapters -> {out}")
         return
     typer.echo(
