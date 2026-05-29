@@ -8,6 +8,7 @@ Tier 2 (marker-pdf) is deferred to a future release; --parser marker errors and
 from __future__ import annotations
 
 import re
+import statistics
 from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
@@ -115,8 +116,35 @@ def _markdown_to_html(md_text: str) -> str:
     return str(md_lib.markdown(md_text, extensions=["tables", "fenced_code"]))
 
 
+_LONG_DOC_PAGES = 20
+_LOW_TEXT_RATIO_FRACTION = 0.5   # page text below 30% of median
+_LOW_TEXT_PAGE_THRESHOLD = 0.4   # fraction of pages that may be low-text before we warn
+
+
 def _quality_warnings(md_text: str, page_texts: list[str], page_count: int) -> list[str]:
-    return []
+    """Return human-readable reasons Tier-1 extraction looks weak (empty list =
+    looks fine). Used to warn the user; a future release feeds this into a
+    marker (Tier 2) retry decision."""
+    reasons: list[str] = []
+
+    has_headings = re.search(r"^#{1,6} +\S", md_text, re.M) is not None
+    if page_count > _LONG_DOC_PAGES and not has_headings:
+        reasons.append(
+            f"no headings detected in a {page_count}-page document (structure likely missed)"
+        )
+
+    lengths = [len(t.strip()) for t in page_texts]
+    if len(lengths) >= 4:
+        median = statistics.median(lengths)
+        if median > 0:
+            low = sum(1 for n in lengths if n < _LOW_TEXT_RATIO_FRACTION * median * 0.6)
+            if low / len(lengths) > _LOW_TEXT_PAGE_THRESHOLD:
+                reasons.append(
+                    f"{low}/{len(lengths)} pages have text far below the median "
+                    f"(image-heavy or failed extraction)"
+                )
+
+    return reasons
 
 
 def parse_pdf(

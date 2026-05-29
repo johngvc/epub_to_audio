@@ -8,6 +8,7 @@ from audiobook.models import ChapterRaw
 from audiobook.parse_pdf import (
     EncryptedPdfError,
     ScannedPdfError,
+    _quality_warnings,
     parse_pdf,
 )
 
@@ -60,3 +61,21 @@ def test_parse_pdf_marker_choice_raises(repo_root: Path, scratch: Path) -> None:
 
     with pytest.raises(MarkerNotAvailableError):
         parse_pdf(repo_root / "tests" / "fixtures" / "tiny.pdf", scratch, parser="marker")
+
+
+def test_quality_warns_on_long_doc_without_headings() -> None:
+    md = "Just flowing prose with no headings at all. " * 50
+    reasons = _quality_warnings(md, page_texts=[md] * 25, page_count=25)
+    assert any("heading" in r.lower() for r in reasons)
+
+
+def test_quality_warns_on_many_low_text_pages() -> None:
+    pages = ["full of text " * 40] * 5 + ["x"] * 5  # half the pages near-empty
+    reasons = _quality_warnings("# H\n\nbody", page_texts=pages, page_count=10)
+    assert any("low-text" in r.lower() or "below" in r.lower() for r in reasons)
+
+
+def test_quality_silent_on_clean_short_doc() -> None:
+    md = "# Chapter One\n\nA normal paragraph of several words goes here.\n"
+    reasons = _quality_warnings(md, page_texts=[md], page_count=1)
+    assert reasons == []
