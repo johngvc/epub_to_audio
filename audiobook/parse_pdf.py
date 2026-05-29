@@ -49,33 +49,37 @@ class MarkerNotAvailableError(PdfParseError):
     """Tier 2 (marker-pdf) was requested but is not available in this build."""
 
 
-def _open_and_guard(pdf_path: Path) -> tuple[fitz.Document, list[str]]:
+def _open_and_guard(pdf_path: Path) -> tuple[int, list[str]]:
     """Open the PDF, fail loudly on encryption or a missing text layer, and
-    return (document, per-page extracted text)."""
-    doc = fitz.open(str(pdf_path))
-    if doc.is_encrypted or doc.needs_pass:
-        doc.close()
-        raise EncryptedPdfError(
-            f"{pdf_path.name} is encrypted/password-protected. Decrypt it first "
-            f"(e.g. with qpdf) and re-run; encrypted PDFs are not supported."
-        )
+    return (page_count, per-page extracted text). The document is closed before
+    returning; pymupdf4llm re-opens it for extraction."""
+    with fitz.open(str(pdf_path)) as doc:
+        if doc.is_encrypted or doc.needs_pass:
+            raise EncryptedPdfError(
+                f"{pdf_path.name} is encrypted/password-protected. Decrypt it first "
+                f"(e.g. with qpdf) and re-run; encrypted PDFs are not supported."
+            )
 
-    page_texts = [page.get_text() for page in doc]
-    total = sum(len(t.strip()) for t in page_texts)
-    page_count = max(doc.page_count, 1)
-    if total < _SCANNED_MIN_TOTAL_CHARS or total / page_count < _SCANNED_MIN_CHARS_PER_PAGE:
-        doc.close()
-        raise ScannedPdfError(
-            f"{pdf_path.name} looks like a scanned PDF (little or no extractable "
-            f"text). OCR support is not yet implemented; this is a separate ticket. "
-            f"Refusing to produce empty/garbage audio."
-        )
-    return doc, page_texts
+        page_texts = [page.get_text() for page in doc]
+        total = sum(len(t.strip()) for t in page_texts)
+        page_count = doc.page_count
+        per_page = total / max(page_count, 1)
+        if total < _SCANNED_MIN_TOTAL_CHARS or per_page < _SCANNED_MIN_CHARS_PER_PAGE:
+            raise ScannedPdfError(
+                f"{pdf_path.name} looks like a scanned PDF (little or no extractable "
+                f"text). OCR support is not yet implemented; this is a separate ticket. "
+                f"Refusing to produce empty/garbage audio."
+            )
+        return page_count, page_texts
 
 
 def _heading_level_to_use(md_text: str, override: int | None) -> int | None:
     """Pick the heading level that delimits chapters. Explicit override wins;
-    otherwise prefer H1, fall back to H2, else None (no headings)."""
+    otherwise prefer H1, fall back to H2, else None (no headings).
+
+    Note: if `override` is set but the document has no headings at that level,
+    `_split_sections` still returns the whole document as a single "Front Matter"
+    section rather than nothing, so the book is never silently empty."""
     if override is not None:
         return override
     if re.search(r"^# +\S", md_text, re.M):
@@ -88,7 +92,7 @@ def _heading_level_to_use(md_text: str, override: int | None) -> int | None:
 def _split_sections(md_text: str, level: int) -> list[tuple[str, str]]:
     """Split Markdown into (title, body_markdown) at headings of exactly `level`.
     Content before the first heading becomes a "Front Matter" section."""
-    heading_re = re.compile(rf"^#{{{level}}}(?!#)\s+(.+?)\s*#*$")
+    heading_re = re.compile(rf"^#{{{level}}}(?!#)\s+(.+?)\s*#*\s*$")
     sections: list[tuple[str, str]] = []
     current_title = "Front Matter"
     current_lines: list[str] = []
@@ -170,9 +174,7 @@ def parse_pdf(
             "a future release. Use --parser auto or --parser pymupdf."
         )
 
-    doc, page_texts = _open_and_guard(pdf_path)
-    page_count = doc.page_count
-    doc.close()
+    page_count, page_texts = _open_and_guard(pdf_path)
 
     raw_md = pymupdf4llm.to_markdown(str(pdf_path))
 

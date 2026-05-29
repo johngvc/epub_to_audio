@@ -96,3 +96,52 @@ def test_quality_silent_on_clean_short_doc() -> None:
     md = "# Chapter One\n\nA normal paragraph of several words goes here.\n"
     reasons = _quality_warnings(md, page_texts=[md], page_count=1)
     assert reasons == []
+
+
+def test_parse_pdf_chapter_level_override_selects_level(repo_root: Path, scratch: Path) -> None:
+    # tiny.pdf's headings are H2; an explicit chapter_level=2 override must split
+    # on them exactly like the auto-fallback does.
+    chapters = parse_pdf(
+        repo_root / "tests" / "fixtures" / "tiny.pdf",
+        scratch,
+        chapter_level=2,
+    )
+    assert [c.title for c in chapters] == ["Chapter One", "Chapter Two"]
+
+
+def test_parse_pdf_book_title_used_when_no_headings(
+    repo_root: Path, scratch: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import audiobook.parse_pdf as pdf_mod
+
+    # Force headingless extraction so the single-section book_title path runs.
+    # Body must exceed the likely_skip word floor (>=10 words) to be kept.
+    body = "This is a paragraph of prose with no headings whatsoever in the entire document."
+    monkeypatch.setattr(pdf_mod.pymupdf4llm, "to_markdown", lambda _p: body)
+    chapters = parse_pdf(
+        repo_root / "tests" / "fixtures" / "tiny.pdf",
+        scratch,
+        book_title="My Book",
+    )
+    assert [c.title for c in chapters] == ["My Book"]
+
+
+def test_parse_pdf_threads_footnote_policy(
+    repo_root: Path, scratch: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import audiobook.parse_pdf as pdf_mod
+
+    seen: dict[str, str] = {}
+    real_clean = pdf_mod.clean_pdf_markdown
+
+    def spy(text: str, *, footnote_policy: str = "skip", **kw: object) -> str:
+        seen["policy"] = footnote_policy
+        return real_clean(text, footnote_policy=footnote_policy)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(pdf_mod, "clean_pdf_markdown", spy)
+    parse_pdf(
+        repo_root / "tests" / "fixtures" / "tiny.pdf",
+        scratch,
+        footnote_policy="endnote",
+    )
+    assert seen["policy"] == "endnote"
