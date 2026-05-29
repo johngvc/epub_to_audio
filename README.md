@@ -12,6 +12,59 @@ See `epub_to_audio_spec.md` for the full spec, `docs/superpowers/specs/` for des
 
 You never need to type `docker compose` or `uv run` directly.
 
+## Quick start (fully offline)
+
+EPUB in → `.m4b` out, no cloud. Everything runs locally: Docker, a local LLM (LM Studio), and on-device TTS.
+
+1. **Install** (macOS, one-time):
+   ```sh
+   brew install colima docker docker-compose uv   # runtime
+   # + install LM Studio: https://lmstudio.ai/
+   bin/dev                  # start Colima, build the Docker image
+   scripts/host-install.sh  # create .venv (torch + chatterbox + openai)
+   ```
+
+2. **Add your inputs:**
+   ```
+   input/book.epub       # the book
+   voice/reference.wav   # 10–15s mono WAV of the narrator voice
+   ```
+   Not a WAV? Convert (e.g. from Voice Memos `.m4a`):
+   ```sh
+   afconvert -f WAVE -d LEI16@24000 -c 1 voice/input.m4a voice/reference.wav
+   ```
+
+3. **Edit `config.toml`** — set the book metadata and confirm offline mode:
+   ```toml
+   [book]
+   title  = "Your Book Title"
+   author = "The Author"
+
+   [adapt]
+   mode = "api"                      # fully offline (local LLM)
+
+   [adapt.api]
+   base_url = "http://localhost:1234/v1"
+   model    = "qwen3.6-35b-a3b-mtp"  # the model id loaded in LM Studio
+   ```
+
+4. **Start LM Studio**, load that model, and confirm its local server is running at `http://localhost:1234`.
+
+5. **Check the voice** (cheap; do this before the multi-hour render):
+   ```sh
+   bin/audiobook voice validate ./voice/reference.wav
+   bin/audiobook voice preview  ./voice/reference.wav
+   ```
+   Listen to `voice/preview.wav`. Re-record if it sounds wrong.
+
+6. **Run everything:**
+   ```sh
+   bin/audiobook run
+   ```
+   Runs all stages (parse → adapt → chunk → render → assemble) and writes `out/book.m4b`. Render takes ~2–4h on Apple Silicon. Every stage is idempotent — re-run `bin/audiobook run` to resume after an interruption.
+
+That's it. For per-stage control, multiple voices, model choice, and every config knob, read on.
+
 ## Prerequisites
 
 On the host (macOS):
