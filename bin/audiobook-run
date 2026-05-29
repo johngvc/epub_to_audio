@@ -9,7 +9,7 @@ PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_DIR"
 
 # ---------- defaults ----------
-INPUT="./input/book.epub"
+INPUT=""   # default resolved below: ./input/book.epub or ./input/book.pdf
 OUT="./out/book.m4b"
 WORK="./work"
 CONFIG="./config.toml"
@@ -33,12 +33,12 @@ ok()   { echo "${GREEN}✓${RESET} $*"; }
 
 usage() {
   cat <<EOF
-Usage: bin/audiobook run [INPUT_EPUB] [OPTIONS]
+Usage: bin/audiobook run [INPUT_BOOK] [OPTIONS]
 
 Runs the full pipeline end-to-end. Auto-installs missing dependencies.
 
 Arguments:
-  INPUT_EPUB        Path to input EPUB (default: ./input/book.epub)
+  INPUT_BOOK        Path to input EPUB or PDF (default: ./input/book.epub, then ./input/book.pdf)
 
 Options:
   --out PATH        Output .m4b path (default: ./out/book.m4b)
@@ -67,6 +67,12 @@ while [[ $# -gt 0 ]]; do
     *)                INPUT="$1"; shift ;;
   esac
 done
+
+if [[ -z "$INPUT" ]]; then
+  if [[ -f ./input/book.epub ]]; then INPUT="./input/book.epub"
+  elif [[ -f ./input/book.pdf ]]; then INPUT="./input/book.pdf"
+  else INPUT="./input/book.epub"; fi
+fi
 
 read_toml_string() {
   # crude TOML reader: read_toml_string FILE 'section' 'key'
@@ -110,9 +116,9 @@ mode="$(read_toml_string "$CONFIG" adapt mode 2>/dev/null || true)"
 if (( ! SKIP_PREFLIGHT )); then
   info "preflight checks"
 
-  # --- EPUB input ---
+  # --- input book (epub/pdf) ---
   if [[ ! -f "$INPUT" ]]; then
-    err "EPUB not found: $INPUT"
+    err "input book not found: $INPUT"
     exit 1
   fi
 

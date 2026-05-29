@@ -3,7 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from typer.testing import CliRunner
 
+from audiobook.cli import app
 from audiobook.models import ChapterRaw
 from audiobook.parse_pdf import (
     EncryptedPdfError,
@@ -145,3 +147,22 @@ def test_parse_pdf_threads_footnote_policy(
         footnote_policy="endnote",
     )
     assert seen["policy"] == "endnote"
+
+
+def test_cli_parse_dispatches_pdf(repo_root: Path, scratch: Path) -> None:
+    runner = CliRunner()
+    src = repo_root / "tests" / "fixtures" / "tiny.pdf"
+    result = runner.invoke(app, ["parse", str(src), "--out", str(scratch)])
+    assert result.exit_code == 0, result.output
+    assert (scratch / "chapters" / "raw" / "00_chapter-one.json").exists()
+
+
+def test_cli_parse_rejects_unknown_extension(
+    repo_root: Path, scratch: Path, tmp_path: Path
+) -> None:
+    runner = CliRunner()
+    bogus = tmp_path / "book.mobi"
+    bogus.write_text("not supported")
+    result = runner.invoke(app, ["parse", str(bogus), "--out", str(scratch)])
+    assert result.exit_code != 0
+    assert "unsupported" in result.output.lower()

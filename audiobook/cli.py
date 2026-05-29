@@ -12,6 +12,7 @@ from audiobook.assemble import assemble_book as _assemble
 from audiobook.chunk import chunk_work_dir as _chunk_dir
 from audiobook.config import load_config
 from audiobook.parse import parse_epub as _parse_epub
+from audiobook.parse_pdf import PdfParseError, parse_pdf as _parse_pdf
 from audiobook.render import render_work_dir, validate_render_dir as _validate_render_dir
 from audiobook.state import load_state
 from audiobook.voice import validate_voice_reference
@@ -193,12 +194,50 @@ def _root() -> None:
 
 @app.command("parse")
 def parse(
-    epub_path: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True),  # noqa: B008
+    input_path: Path = typer.Argument(  # noqa: B008
+        ..., exists=True, dir_okay=False, readable=True,
+        help="Input book: .epub or .pdf",
+    ),
     out: Path = typer.Option(Path("./work"), "--out", help="Output work directory."),  # noqa: B008
+    config: Path = typer.Option(Path("./config.toml"), "--config"),  # noqa: B008
+    parser: str | None = typer.Option(None, "--parser", help="PDF only: auto|pymupdf|marker."),
+    footnote_policy: str | None = typer.Option(
+        None, "--footnote-policy", help="PDF only: inline|endnote|skip."
+    ),
+    chapter_level: int | None = typer.Option(
+        None, "--chapter-level", help="PDF only: heading level used as chapter boundaries (1-6)."
+    ),
 ) -> None:
-    """Stage 1 — parse an EPUB into per-chapter JSON + book_full_text.md."""
-    chapters = _parse_epub(epub_path, out)
-    typer.echo(f"parsed {len(chapters)} chapters -> {out}")
+    """Stage 1 — parse an EPUB or PDF into per-chapter JSON + book_full_text.md."""
+    suffix = input_path.suffix.lower()
+    if suffix == ".epub":
+        chapters = _parse_epub(input_path, out)
+        typer.echo(f"parsed {len(chapters)} chapters -> {out}")
+        return
+    if suffix == ".pdf":
+        cfg = load_config(config) if config.exists() else load_config_default()
+        p = parser or cfg.parse.parser
+        fp = footnote_policy or cfg.parse.footnote_policy
+        cl = chapter_level if chapter_level is not None else cfg.parse.chapter_level
+        try:
+            chapters = _parse_pdf(
+                input_path,
+                out,
+                parser=p,  # type: ignore[arg-type]
+                footnote_policy=fp,  # type: ignore[arg-type]
+                chapter_level=cl,
+                book_title=cfg.book.title or None,
+                progress=lambda line: typer.echo(line, err=True),
+            )
+        except PdfParseError as exc:
+            typer.echo(f"error: {exc}", err=True)
+            raise typer.Exit(1) from exc
+        typer.echo(f"parsed {len(chapters)} chapters -> {out}")
+        return
+    typer.echo(
+        f"error: unsupported input format {suffix!r}. Supported: .epub, .pdf", err=True
+    )
+    raise typer.Exit(2)
 
 
 @app.command("adapt")
