@@ -10,7 +10,7 @@ from audiobook.adapt import merge_pronunciation as _merge_pron
 from audiobook.adapt import validate_adapted_dir as _validate_dir
 from audiobook.assemble import assemble_book as _assemble
 from audiobook.chunk import chunk_work_dir as _chunk_dir
-from audiobook.config import load_config
+from audiobook.config import AppConfig, load_config
 from audiobook.parse import parse_epub as _parse_epub
 from audiobook.parse_pdf import PdfParseError, parse_pdf as _parse_pdf
 from audiobook.render import render_work_dir, validate_render_dir as _validate_render_dir
@@ -18,9 +18,8 @@ from audiobook.state import load_state
 from audiobook.voice import validate_voice_reference
 
 
-def load_config_default():
+def load_config_default() -> AppConfig:
     """Return a default AppConfig without reading from disk."""
-    from audiobook.config import AppConfig
     return AppConfig()
 
 
