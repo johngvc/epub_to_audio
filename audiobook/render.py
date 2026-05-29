@@ -106,6 +106,7 @@ def render_chapter_chunks(
     tts_callable: TTSCallable,
     voice_conditioning: Any,
     progress: Callable[[str], None] | None = None,
+    tts_kwargs: dict[str, Any] | None = None,
 ) -> None:
     """Render every chunk in ``cc`` to ``out_dir/{chunk_id}.wav``.
 
@@ -125,7 +126,9 @@ def render_chapter_chunks(
                 progress(f"[ch{cc.index:02d} {i}/{total}] {chunk.id} skipped (exists)")
             continue
         t0 = time.monotonic()
-        samples, sr = tts_callable(chunk.text, voice_conditioning=voice_conditioning)
+        samples, sr = tts_callable(
+            chunk.text, voice_conditioning=voice_conditioning, **(tts_kwargs or {})
+        )
         write_wav_with_trailing_silence(wav_path, samples, sr, chunk.trailing_silence_ms)
         side = {
             "chunk_id": chunk.id,
@@ -167,8 +170,19 @@ def _load_chatterbox(device: str) -> tuple[Any, TTSCallable]:
     return model, _call
 
 
-def render_work_dir(work_dir: Path, *, device: str, workers: int, voice_path: Path) -> None:
-    """Top-level entry. Loads Chatterbox once and renders every chapter."""
+def render_work_dir(
+    work_dir: Path,
+    *,
+    device: str,
+    workers: int,
+    voice_path: Path,
+    tts_kwargs: dict[str, Any] | None = None,
+) -> None:
+    """Top-level entry. Loads Chatterbox once and renders every chapter.
+
+    ``tts_kwargs`` is forwarded to every ``ChatterboxTTS.generate`` call
+    (e.g. ``{"exaggeration": 0.8, "cfg_weight": 0.7, "temperature": 0.7}``).
+    """
     from concurrent.futures import ThreadPoolExecutor
 
     work_dir = Path(work_dir)
@@ -190,6 +204,7 @@ def render_work_dir(work_dir: Path, *, device: str, workers: int, voice_path: Pa
             tts_callable=tts_callable,
             voice_conditioning=str(voice_path),
             progress=_progress,
+            tts_kwargs=tts_kwargs,
         )
 
     with ThreadPoolExecutor(max_workers=workers) as ex:

@@ -89,9 +89,10 @@ def test_cli_render_resolves_voice_name(tmp_path, monkeypatch):
     called = {}
     import audiobook.cli as cli_mod
 
-    def fake_render(work_dir, *, device, workers, voice_path):
+    def fake_render(work_dir, *, device, workers, voice_path, tts_kwargs=None):
         called["voice_path"] = voice_path
         called["work_dir"] = work_dir
+        called["tts_kwargs"] = tts_kwargs
 
     monkeypatch.setattr(cli_mod, "render_work_dir", fake_render)
     monkeypatch.chdir(tmp_path)
@@ -104,3 +105,31 @@ def test_cli_render_resolves_voice_name(tmp_path, monkeypatch):
     result = runner.invoke(app, ["render", "./work", "--voice", "alice"])
     assert result.exit_code == 0, result.stdout
     assert called["voice_path"] == voice
+    # Sanity check that the config-derived TTS params reach render_work_dir.
+    assert set(called["tts_kwargs"].keys()) == {"exaggeration", "cfg_weight", "temperature"}
+
+
+def test_render_chapter_chunks_forwards_tts_kwargs(scratch: Path) -> None:
+    """Confirms exaggeration/cfg_weight/temperature reach the TTS callable.
+
+    Regression: these were declared in config but the call site dropped them,
+    so tuning had no effect on output until the kwarg plumbing was added.
+    """
+    seen: list[dict[str, Any]] = []
+
+    def capturing_tts(text: str, *, voice_conditioning: Any, **kw: Any) -> tuple[np.ndarray, int]:
+        seen.append(kw)
+        return (0.1 * np.sin(2 * np.pi * 220 * np.arange(24000) / 24000)).astype(np.float32), 24000
+
+    cc = ChapterChunks(
+        index=0, title="X",
+        chunks=[Chunk(id="0000", text="hi", trailing_silence_ms=0)],
+    )
+    render_chapter_chunks(
+        cc,
+        out_dir=scratch / "ch",
+        tts_callable=capturing_tts,
+        voice_conditioning=None,
+        tts_kwargs={"exaggeration": 0.8, "cfg_weight": 0.7, "temperature": 0.6},
+    )
+    assert seen == [{"exaggeration": 0.8, "cfg_weight": 0.7, "temperature": 0.6}]

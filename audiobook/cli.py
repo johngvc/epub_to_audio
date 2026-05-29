@@ -59,12 +59,22 @@ def voice_preview(
     ),
     out: Path = typer.Option(Path("./voice/preview.wav"), "--out"),  # noqa: B008
     config: Path = typer.Option(Path("./config.toml"), "--config"),  # noqa: B008
+    exaggeration: float | None = typer.Option(
+        None, "--exaggeration", help="Override [render].exaggeration for this preview."
+    ),
+    cfg_weight: float | None = typer.Option(
+        None, "--cfg-weight", help="Override [render].cfg_weight for this preview."
+    ),
+    temperature: float | None = typer.Option(
+        None, "--temperature", help="Override [render].temperature for this preview."
+    ),
 ) -> None:
     """Render a preview using the supplied reference voice. HOST ONLY.
 
     The reference can come from (in order): positional REFERENCE path,
     --voice NAME-or-PATH, or the library default. Use `audiobook voice list`
-    to see saved names.
+    to see saved names. Pass --exaggeration / --cfg-weight / --temperature
+    to override the [render] config for fast accent tuning.
     """
     import soundfile as sf  # type: ignore[import-untyped]
 
@@ -79,8 +89,18 @@ def voice_preview(
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(2) from None
 
+    tts_kwargs = {
+        "exaggeration": exaggeration if exaggeration is not None else cfg.render.exaggeration,
+        "cfg_weight": cfg_weight if cfg_weight is not None else cfg.render.cfg_weight,
+        "temperature": temperature if temperature is not None else cfg.render.temperature,
+    }
+    typer.echo(
+        f"params: exaggeration={tts_kwargs['exaggeration']} "
+        f"cfg_weight={tts_kwargs['cfg_weight']} temperature={tts_kwargs['temperature']}"
+    )
+
     _, tts = _load_chatterbox("mps")
-    samples, sr = tts(text, voice_conditioning=str(ref))
+    samples, sr = tts(text, voice_conditioning=str(ref), **tts_kwargs)
     out.parent.mkdir(parents=True, exist_ok=True)
     sf.write(str(out), samples, sr, subtype="PCM_16")
     typer.echo(f"wrote {out}")
@@ -283,7 +303,15 @@ def render_cmd(
         raise typer.Exit(2) from None
 
     render_work_dir(
-        work_dir, device=cfg.render.device, workers=cfg.render.workers, voice_path=voice_path
+        work_dir,
+        device=cfg.render.device,
+        workers=cfg.render.workers,
+        voice_path=voice_path,
+        tts_kwargs={
+            "exaggeration": cfg.render.exaggeration,
+            "cfg_weight": cfg.render.cfg_weight,
+            "temperature": cfg.render.temperature,
+        },
     )
     typer.echo("render complete")
 
