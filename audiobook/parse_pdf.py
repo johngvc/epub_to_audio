@@ -117,7 +117,7 @@ def _markdown_to_html(md_text: str) -> str:
 
 
 _LONG_DOC_PAGES = 20
-_LOW_TEXT_RATIO_FRACTION = 0.5   # page text below 30% of median
+_LOW_TEXT_MEDIAN_FRACTION = 0.3  # a page is "low-text" below 30% of the median page length
 _LOW_TEXT_PAGE_THRESHOLD = 0.4   # fraction of pages that may be low-text before we warn
 
 
@@ -137,7 +137,7 @@ def _quality_warnings(md_text: str, page_texts: list[str], page_count: int) -> l
     if len(lengths) >= 4:
         median = statistics.median(lengths)
         if median > 0:
-            low = sum(1 for n in lengths if n < _LOW_TEXT_RATIO_FRACTION * median * 0.6)
+            low = sum(1 for n in lengths if n < _LOW_TEXT_MEDIAN_FRACTION * median)
             if low / len(lengths) > _LOW_TEXT_PAGE_THRESHOLD:
                 reasons.append(
                     f"{low}/{len(lengths)} pages have text far below the median "

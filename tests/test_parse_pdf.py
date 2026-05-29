@@ -31,7 +31,7 @@ def test_parse_pdf_produces_chapter_files(repo_root: Path, scratch: Path) -> Non
     chapters = parse_pdf(repo_root / "tests" / "fixtures" / "tiny.pdf", scratch)
     raw_dir = scratch / "chapters" / "raw"
     files = sorted(raw_dir.glob("*.json"))
-    assert len(files) == 2          # two H1 chapters
+    assert len(files) == 2          # two heading-delimited chapters
     assert len(chapters) == 2
     for f in files:
         ChapterRaw.model_validate_json(f.read_text())
@@ -56,11 +56,28 @@ def test_parse_pdf_emits_book_full_text(repo_root: Path, scratch: Path) -> None:
     assert "# Chapter Two" in md
 
 
-def test_parse_pdf_marker_choice_raises(repo_root: Path, scratch: Path) -> None:
+def test_parse_pdf_marker_choice_raises_before_opening(repo_root: Path, scratch: Path) -> None:
     from audiobook.parse_pdf import MarkerNotAvailableError
 
+    # Using the encrypted fixture proves the marker guard fires BEFORE the PDF is
+    # opened: we get MarkerNotAvailableError, not EncryptedPdfError.
     with pytest.raises(MarkerNotAvailableError):
-        parse_pdf(repo_root / "tests" / "fixtures" / "tiny.pdf", scratch, parser="marker")
+        parse_pdf(repo_root / "tests" / "fixtures" / "encrypted.pdf", scratch, parser="marker")
+
+
+def test_parse_pdf_surfaces_quality_warning_via_progress(
+    repo_root: Path, scratch: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import audiobook.parse_pdf as pdf_mod
+
+    monkeypatch.setattr(pdf_mod, "_quality_warnings", lambda *a, **k: ["forced reason"])
+    lines: list[str] = []
+    parse_pdf(
+        repo_root / "tests" / "fixtures" / "tiny.pdf",
+        scratch,
+        progress=lines.append,
+    )
+    assert any("forced reason" in ln and "Tier 2" in ln for ln in lines)
 
 
 def test_quality_warns_on_long_doc_without_headings() -> None:
