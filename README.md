@@ -116,6 +116,21 @@ input/book.epub          # your EPUB
 voice/reference.wav      # 10-15s mono WAV of the narrator voice (any audio format also works)
 ```
 
+**Input formats:** `.epub` (default) and `.pdf`. For PDF, name the file `input/book.pdf`
+(or pass the path: `bin/audiobook run ./input/book.pdf`). PDF options live in
+`config.toml`'s `[parse]` block, overridable per run:
+
+    bin/audiobook parse ./input/book.pdf --parser auto --footnote-policy skip --chapter-level 1
+
+- `--parser auto|pymupdf|marker` — `auto` (default) extracts with pymupdf4llm and warns
+  if the result looks low-quality. `marker` (better multi-column/equation handling) is
+  deferred to a future release and currently errors.
+- `--footnote-policy inline|endnote|skip` — default `skip`.
+- `--chapter-level N` — heading level (1–6) used as chapter boundaries (default: H1, else H2).
+
+**Not supported:** scanned/image-only PDFs (no OCR — fails with a clear message) and
+encrypted PDFs (decrypt first, e.g. with `qpdf`).
+
 If your recording is in m4a (Voice Memos) or another format, convert:
 
 ```sh
@@ -222,6 +237,7 @@ All knobs live in `config.toml`. The most useful ones:
 | `[render].workers` | Parallel TTS workers | 1-2 typical for a single GPU |
 | `[render].exaggeration`, `.cfg_weight`, `.temperature` | Chatterbox voice knobs | Defaults are tuned for spoken word |
 | `[assemble].audio_bitrate_kbps` | AAC bitrate in the output `.m4b` | 64 kbps is fine for speech |
+| `[parse].parser`, `.footnote_policy`, `.chapter_level` | PDF ingestion options | EPUB ignores these |
 
 Env-var overrides for `[adapt.api]` (useful for not committing secrets):
 

@@ -33,3 +33,4 @@ voices/*
 
 # Keep the tiny fixture
 !tests/fixtures/tiny.epub
+tests/corpus/
