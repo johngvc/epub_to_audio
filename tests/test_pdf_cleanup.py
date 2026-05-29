@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from audiobook.pdf_cleanup import collapse_whitespace, normalize_punctuation
+from audiobook.pdf_cleanup import collapse_whitespace, dehyphenate, normalize_punctuation
 
 
 def test_normalize_smart_quotes_to_ascii() -> None:
@@ -19,3 +19,19 @@ def test_normalize_dashes_and_ellipsis() -> None:
 def test_collapse_whitespace_runs_and_blank_lines() -> None:
     text = "a   b\t c\n\n\n\nd  \n"
     assert collapse_whitespace(text) == "a b c\n\nd"
+
+
+def test_dehyphenate_joins_real_words() -> None:
+    vocab = {"retrieval", "payment"}
+    assert dehyphenate("re-\ntrieval", is_word=vocab.__contains__) == "retrieval"
+    assert dehyphenate("pay-\nment due", is_word=vocab.__contains__) == "payment due"
+
+
+def test_dehyphenate_keeps_genuine_compounds() -> None:
+    # "ofthe" is not a word -> collapse the newline but keep the hyphen.
+    vocab = {"state", "art"}
+    assert dehyphenate("state-of-\nthe-art", is_word=vocab.__contains__) == "state-of-the-art"
+
+
+def test_dehyphenate_preserves_normal_text() -> None:
+    assert dehyphenate("no hyphen breaks here", is_word=lambda w: True) == "no hyphen breaks here"
