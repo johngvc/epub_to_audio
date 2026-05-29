@@ -2,33 +2,22 @@
 plaintext-ish book_full_text.md used by adaptation subagents."""
 from __future__ import annotations
 
-import re
 import warnings
 from pathlib import Path
 
 import ebooklib  # type: ignore[import-untyped]
 from bs4 import BeautifulSoup, Tag, XMLParsedAsHTMLWarning
 from ebooklib import epub
-from markdownify import markdownify
 
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 
 from audiobook.models import ChapterRaw  # noqa: E402
-from audiobook.utils.slugify import slugify  # noqa: E402
-
-_SKIP_PATTERNS = (
-    re.compile(r"copyright", re.I),
-    re.compile(r"acknowledg", re.I),
-    re.compile(r"dedication", re.I),
-    re.compile(r"^index$", re.I),
-    re.compile(r"bibliograph", re.I),
+from audiobook.parse_common import (  # noqa: E402
+    detect_features,
+    likely_skip,
+    strip_for_full_text,
 )
-
-
-def _likely_skip(title: str, text: str) -> bool:
-    if any(p.search(title) for p in _SKIP_PATTERNS):
-        return True
-    return len(text.split()) < 10
+from audiobook.utils.slugify import slugify  # noqa: E402
 
 
 def _resolve_titles(book: epub.EpubBook) -> dict[str, str]:
@@ -47,26 +36,6 @@ def _resolve_titles(book: epub.EpubBook) -> dict[str, str]:
     if book.toc:
         walk(list(book.toc))
     return titles
-
-
-def _detect_features(soup: BeautifulSoup) -> tuple[bool, bool, bool]:
-    has_code = soup.find(["pre", "code"]) is not None
-    has_math = bool(soup.find("math")) or bool(soup.find(class_="math"))
-    has_tables = soup.find("table") is not None
-    return has_code, has_math, has_tables
-
-
-def _strip_for_full_text(html: str) -> str:
-    soup = BeautifulSoup(html, "lxml")
-    for tag in soup.find_all(["pre", "code"]):
-        if isinstance(tag, Tag):
-            tag.replace_with("[code block]")
-    for tag in soup.find_all("script") + soup.find_all("style"):
-        if isinstance(tag, Tag):
-            tag.decompose()
-    md: str = markdownify(str(soup), heading_style="ATX")
-    md = re.sub(r"\n{3,}", "\n\n", md).strip()
-    return md
 
 
 def parse_epub(epub_path: Path, out_dir: Path) -> list[ChapterRaw]:
@@ -99,10 +68,10 @@ def parse_epub(epub_path: Path, out_dir: Path) -> list[ChapterRaw]:
             title = h.get_text(strip=True) if h else item.get_name()
 
         text = soup.get_text(" ", strip=True)
-        if _likely_skip(title, text):
+        if likely_skip(title, text):
             continue
 
-        has_code, has_math, has_tables = _detect_features(soup)
+        has_code, has_math, has_tables = detect_features(soup)
         chapter = ChapterRaw(
             index=index,
             title=title,
@@ -117,7 +86,7 @@ def parse_epub(epub_path: Path, out_dir: Path) -> list[ChapterRaw]:
         out_path.write_text(chapter.model_dump_json(indent=2) + "\n")
         chapters.append(chapter)
 
-        full_text_sections.append(f"# {title}\n\n{_strip_for_full_text(str(soup))}")
+        full_text_sections.append(f"# {title}\n\n{strip_for_full_text(str(soup))}")
         index += 1
 
     (out_dir / "book_full_text.md").write_text("\n\n".join(full_text_sections) + "\n")
