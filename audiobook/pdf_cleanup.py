@@ -97,7 +97,7 @@ def strip_page_artifacts(text: str) -> str:
         for ln in lines
         if ln.strip()
         and not ln.lstrip().startswith("#")
-        and len(ln.strip()) <= _HEADER_MAX_LEN
+        and len(ln.strip()) < _HEADER_MAX_LEN
     )
     repeated = {s for s, n in counts.items() if n >= _HEADER_REPEAT_THRESHOLD}
 
