@@ -73,6 +73,30 @@ def _open_and_guard(pdf_path: Path) -> tuple[int, list[str]]:
         return page_count, page_texts
 
 
+def _outline_sections(pdf_path: Path, page_count: int) -> list[tuple[str, list[int]]] | None:
+    """Return ``[(title, zero-based page indices)]`` for each top-level outline
+    (bookmark) entry, or ``None`` when the PDF has no usable outline (fewer than
+    two level-1 entries).
+
+    Each entry spans from its start page up to the next level-1 entry's start
+    page (exclusive). This is far more reliable than Markdown-heading detection
+    for code-heavy books, where literal ``#`` Python comments masquerade as
+    headings and shred the book into hundreds of bogus sections.
+    """
+    with fitz.open(str(pdf_path)) as doc:
+        toc = doc.get_toc(simple=True)
+    level1 = [(title.strip(), start) for lvl, title, start in toc if lvl == 1 and start >= 1]
+    if len(level1) < 2:
+        return None
+    sections: list[tuple[str, list[int]]] = []
+    for i, (title, start) in enumerate(level1):
+        end = level1[i + 1][1] if i + 1 < len(level1) else page_count + 1
+        pages = list(range(start - 1, min(end - 1, page_count)))
+        if pages:
+            sections.append((title, pages))
+    return sections
+
+
 def _heading_level_to_use(md_text: str, override: int | None) -> int | None:
     """Pick the heading level that delimits chapters. Explicit override wins;
     otherwise prefer H1, fall back to H2, else None (no headings).
@@ -176,25 +200,44 @@ def parse_pdf(
 
     page_count, page_texts = _open_and_guard(pdf_path)
 
-    raw_md = pymupdf4llm.to_markdown(str(pdf_path))
+    # Prefer the PDF's own outline (bookmarks) for chapter boundaries when it
+    # exists and the caller hasn't forced a heading level. Falls back to
+    # Markdown-heading splitting for PDFs without an outline.
+    outline = _outline_sections(pdf_path, page_count) if chapter_level is None else None
 
-    if parser in ("auto", "pymupdf"):
-        reasons = _quality_warnings(raw_md, page_texts, page_count)
-        if reasons and progress:
-            progress(
-                "low-quality extraction signals: "
-                + "; ".join(reasons)
-                + ". Tier 2 (marker) is deferred to a future release — using Tier 1 output."
+    if outline is not None:
+        if progress:
+            progress(f"using embedded PDF outline: {len(outline)} top-level entries")
+        sections = [
+            (
+                title,
+                clean_pdf_markdown(
+                    pymupdf4llm.to_markdown(str(pdf_path), pages=pages),
+                    footnote_policy=footnote_policy,
+                ),
             )
-
-    cleaned = clean_pdf_markdown(raw_md, footnote_policy=footnote_policy)
-    level = _heading_level_to_use(cleaned, chapter_level)
-
-    if level is None:
-        title = book_title or pdf_path.stem
-        sections = [(title, cleaned)]
+            for title, pages in outline
+        ]
     else:
-        sections = _split_sections(cleaned, level)
+        raw_md = pymupdf4llm.to_markdown(str(pdf_path))
+
+        if parser in ("auto", "pymupdf"):
+            reasons = _quality_warnings(raw_md, page_texts, page_count)
+            if reasons and progress:
+                progress(
+                    "low-quality extraction signals: "
+                    + "; ".join(reasons)
+                    + ". Tier 2 (marker) is deferred to a future release — using Tier 1 output."
+                )
+
+        cleaned = clean_pdf_markdown(raw_md, footnote_policy=footnote_policy)
+        level = _heading_level_to_use(cleaned, chapter_level)
+
+        if level is None:
+            title = book_title or pdf_path.stem
+            sections = [(title, cleaned)]
+        else:
+            sections = _split_sections(cleaned, level)
 
     chapters: list[ChapterRaw] = []
     full_text_sections: list[str] = []
@@ -219,7 +262,7 @@ def parse_pdf(
             has_math=has_math,
             has_tables=has_tables,
         )
-        out_path = raw_dir / f"{index:02d}_{slugify(title)}.json"
+        out_path = raw_dir / f"{index:02d}_{slugify(title, max_length=60)}.json"
         out_path.write_text(chapter.model_dump_json(indent=2) + "\n")
         chapters.append(chapter)
 

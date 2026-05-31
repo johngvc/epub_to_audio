@@ -30,6 +30,17 @@ def normalize_punctuation(text: str) -> str:
     return _PUNCT_RE.sub(lambda m: _PUNCT_MAP[m.group(0)], text)
 
 
+# pymupdf4llm emits image placeholders like
+# "==> picture [33 x 67] intentionally omitted <==" that would otherwise be
+# read aloud verbatim.
+_IMAGE_PLACEHOLDER_RE = re.compile(r"==>.*?<==", re.DOTALL)
+
+
+def strip_image_placeholders(text: str) -> str:
+    """Remove pymupdf4llm ``==> ... intentionally omitted <==`` image markers."""
+    return _IMAGE_PLACEHOLDER_RE.sub("", text)
+
+
 def collapse_whitespace(text: str) -> str:
     """Collapse intra-line whitespace runs, trim line ends, and reduce any
     run of blank lines to a single blank line. Trailing/leading blank lines
@@ -145,6 +156,43 @@ def apply_footnote_policy(text: str, policy: FootnotePolicy) -> str:
     return result
 
 
+# ATX heading line, capturing the hash run and the heading text.
+_HEADING_RE = re.compile(r"^(#{1,6})(?!#)\s+(.*\S)\s*$")
+# Tokens that betray flattened code / shell commands rather than prose.
+_CODE_TOKEN_RE = re.compile(
+    r"[=(){}\[\];]|>>>|\$\s|::|\bprint\(|\bimport\s|\bdef\s|\bclass\s|\bnp\.|\bplt\.|\bself\."
+)
+# Prose headings are short; longer "headings" are almost always wrapped code.
+_HEADING_MAX_LEN = 70
+
+
+def neutralize_code_headings(text: str) -> str:
+    """Demote ATX "headings" that are really flattened code or shell commands
+    back to plain text, and strip bold markers from genuine headings.
+
+    Programming-book PDFs are full of code listings whose literal ``#`` Python
+    comments (and long wrapped statements) parse as Markdown headings, so the
+    chapter splitter would treat every code comment as a chapter boundary. A
+    heading line is demoted when its text exceeds ``_HEADING_MAX_LEN`` or
+    contains code/command tokens; real prose headings ("What is AI?",
+    "Branches of AI") are short and tokenless, so they survive (with surrounding
+    ``**bold**`` removed so titles stay clean).
+    """
+    out: list[str] = []
+    for line in text.splitlines():
+        m = _HEADING_RE.match(line)
+        if not m:
+            out.append(line)
+            continue
+        hashes, content = m.group(1), m.group(2).strip()
+        inner = content.strip("*").strip()
+        if len(inner) > _HEADING_MAX_LEN or _CODE_TOKEN_RE.search(inner):
+            out.append(inner)  # demote to a plain text line
+        else:
+            out.append(f"{hashes} {inner}")
+    return "\n".join(out)
+
+
 def clean_pdf_markdown(
     text: str,
     *,
@@ -153,13 +201,15 @@ def clean_pdf_markdown(
 ) -> str:
     """Full deterministic cleanup, in dependency order: de-hyphenate (needs the
     original line breaks) -> normalize punctuation -> strip page artifacts ->
-    apply footnote policy -> collapse whitespace."""
+    apply footnote policy -> neutralize code-as-headings -> collapse whitespace."""
     # Normalize line endings up front so de-hyphenation (which keys on "\n")
     # works on CRLF-extracted PDFs too.
     text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = strip_image_placeholders(text)
     text = dehyphenate(text, is_word=is_word)
     text = normalize_punctuation(text)
     text = strip_page_artifacts(text)
     text = apply_footnote_policy(text, footnote_policy)
+    text = neutralize_code_headings(text)
     text = collapse_whitespace(text)
     return text
