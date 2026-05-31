@@ -89,10 +89,11 @@ def test_cli_render_resolves_voice_name(tmp_path, monkeypatch):
     called = {}
     import audiobook.cli as cli_mod
 
-    def fake_render(work_dir, *, device, workers, voice_path, tts_kwargs=None):
+    def fake_render(work_dir, *, device, workers, voice_path, tts_kwargs=None, verbose=False):
         called["voice_path"] = voice_path
         called["work_dir"] = work_dir
         called["tts_kwargs"] = tts_kwargs
+        called["verbose"] = verbose
 
     monkeypatch.setattr(cli_mod, "render_work_dir", fake_render)
     monkeypatch.chdir(tmp_path)

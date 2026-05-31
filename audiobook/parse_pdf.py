@@ -21,6 +21,7 @@ from bs4 import BeautifulSoup
 from audiobook.models import ChapterRaw
 from audiobook.parse_common import detect_features, likely_skip, strip_for_full_text
 from audiobook.pdf_cleanup import FootnotePolicy, clean_pdf_markdown
+from audiobook.utils.progress import pct_line
 from audiobook.utils.slugify import slugify
 
 ParserChoice = Literal["auto", "pymupdf", "marker"]
@@ -184,6 +185,7 @@ def parse_pdf(
     chapter_level: int | None = None,
     book_title: str | None = None,
     progress: Callable[[str], None] | None = None,
+    verbose: bool = False,
 ) -> list[ChapterRaw]:
     """Parse a PDF into per-chapter JSON files plus book_full_text.md, matching
     the EPUB parser's on-disk contract exactly."""
@@ -242,11 +244,14 @@ def parse_pdf(
     chapters: list[ChapterRaw] = []
     full_text_sections: list[str] = []
     index = 0
-    for title, body_md in sections:
+    total_sections = len(sections)
+    for pos, (title, body_md) in enumerate(sections, 1):
         html = _markdown_to_html(body_md)
         soup = BeautifulSoup(html, "lxml")
         text = soup.get_text(" ", strip=True)
         if likely_skip(title, text):
+            if verbose and progress:
+                progress(pct_line("parse", pos, total_sections, f"{title} (skipped)"))
             continue
 
         has_code, has_math, has_tables = detect_features(soup)
@@ -267,6 +272,8 @@ def parse_pdf(
         chapters.append(chapter)
 
         full_text_sections.append(f"# {title}\n\n{strip_for_full_text(str(soup))}")
+        if verbose and progress:
+            progress(pct_line("parse", pos, total_sections, title))
         index += 1
 
     (out_dir / "book_full_text.md").write_text("\n\n".join(full_text_sections) + "\n")

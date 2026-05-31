@@ -3,10 +3,13 @@ from __future__ import annotations
 
 import subprocess
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 
 import soundfile as sf  # type: ignore[import-untyped]
 from mutagen.mp4 import MP4, MP4Cover
+
+from audiobook.utils.progress import pct_line
 
 
 def chapter_durations(work_dir: Path) -> dict[str, float]:
@@ -64,6 +67,8 @@ def assemble_book(
     out_path: Path,
     bitrate_kbps: int = 64,
     cover_path: Path | None = None,
+    progress: Callable[[str], None] | None = None,
+    verbose: bool = False,
 ) -> None:
     work_dir = Path(work_dir)
     chunks_root = work_dir / "audio" / "chunks"
@@ -71,6 +76,7 @@ def assemble_book(
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     chap_dirs = sorted(p for p in chunks_root.iterdir() if p.is_dir())
+    total_chapters = len(chap_dirs)
 
     with tempfile.TemporaryDirectory() as tmp:
         tmpdir = Path(tmp)
@@ -78,13 +84,15 @@ def assemble_book(
         chapter_titles: list[str] = []
         chapter_lengths: list[float] = []
 
-        for chap_dir in chap_dirs:
+        for pos, chap_dir in enumerate(chap_dirs, 1):
             wav = tmpdir / f"{chap_dir.name}.wav"
             _concat_chapter_to_wav(chap_dir, wav)
             chapter_wavs.append(wav)
             chapter_titles.append(chap_dir.name)
             info = sf.info(str(wav))
             chapter_lengths.append(info.frames / info.samplerate)
+            if verbose and progress:
+                progress(pct_line("assemble", pos, total_chapters, chap_dir.name))
 
         all_list = tmpdir / "all.txt"
         all_list.write_text("\n".join(f"file '{w.resolve()}'" for w in chapter_wavs) + "\n")

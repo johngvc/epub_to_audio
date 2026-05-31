@@ -11,6 +11,7 @@ from typing import Any
 from audiobook.adapt import validate_adapted_file
 from audiobook.config import AppConfig, ResolvedAdaptApi, resolve_adapt_api
 from audiobook.models import ChapterAdapted
+from audiobook.utils.progress import pct_line
 
 
 def _chapter_adapted_response_format() -> dict[str, Any]:
@@ -114,6 +115,7 @@ def run_adapt_api(
     cfg: AppConfig,
     progress: Callable[[str], None] | None = None,
     client_factory: ClientFactory | None = None,
+    verbose: bool = False,
 ) -> AdaptRunSummary:
     """Drive Stage 2 (adapt) against an OpenAI-compatible API.
 
@@ -153,7 +155,8 @@ def run_adapt_api(
     client = client_factory(api)
     book_context = book_text if summary.included_book_context else None
 
-    for raw_path in raw_paths:
+    total = len(raw_paths)
+    for done, raw_path in enumerate(raw_paths, 1):
         stem = raw_path.stem
         adapted_path = adapted_dir / raw_path.name
 
@@ -164,11 +167,15 @@ def run_adapt_api(
                 summary.succeeded.append(stem)
                 if progress:
                     progress(f"[{stem}] already valid; skipping")
+                if verbose and progress:
+                    progress(pct_line("adapt", done, total, f"{stem} skipped (already valid)"))
                 continue
 
         raw_json = raw_path.read_text()
         last_error: tuple[str, str] | None = None
         had_retry = False
+        chapter_in = 0
+        chapter_out = 0
 
         for attempt in range(3):  # 1 initial + up to 2 retries
             messages = _build_messages(
@@ -188,6 +195,8 @@ def run_adapt_api(
 
             summary.total_input_tokens += in_tok
             summary.total_output_tokens += out_tok
+            chapter_in += in_tok
+            chapter_out += out_tok
             adapted_path.write_text(content)
 
             outcome = validate_adapted_file(raw_path, adapted_path)
@@ -197,6 +206,11 @@ def run_adapt_api(
                     summary.retried.append(stem)
                 if progress:
                     progress(f"[{stem}] ok on attempt {attempt + 1}")
+                if verbose and progress:
+                    progress(pct_line(
+                        "adapt", done, total,
+                        f"{stem} ok in={chapter_in} out={chapter_out} tok",
+                    ))
                 break
 
             last_error = (outcome.error_kind or "unknown", outcome.detail)
@@ -208,6 +222,11 @@ def run_adapt_api(
             summary.failed.append((stem, f"{last_error[0]}: {last_error[1]}" if last_error else "unknown"))
             # Remove the last bad write so the next run can retry cleanly.
             adapted_path.unlink(missing_ok=True)
+            if verbose and progress:
+                progress(pct_line(
+                    "adapt", done, total,
+                    f"{stem} fail in={chapter_in} out={chapter_out} tok",
+                ))
 
     summary.wall_seconds = time.monotonic() - started
     return summary

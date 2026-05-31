@@ -12,6 +12,7 @@ import soundfile as sf  # type: ignore[import-untyped]
 
 from audiobook.models import ChapterChunks
 from audiobook.utils.audio import write_wav_with_trailing_silence
+from audiobook.utils.progress import pct_line
 
 TTSCallable = Callable[..., tuple[np.ndarray, int]]
 
@@ -106,13 +107,17 @@ def render_chapter_chunks(
     tts_callable: TTSCallable,
     voice_conditioning: Any,
     progress: Callable[[str], None] | None = None,
+    on_chunk: Callable[[str], None] | None = None,
     tts_kwargs: dict[str, Any] | None = None,
 ) -> None:
     """Render every chunk in ``cc`` to ``out_dir/{chunk_id}.wav``.
 
     Skips chunks whose WAV already exists. Writes a JSON sidecar per chunk
     so failed chunks can be targeted for re-render. If ``progress`` is given,
-    it's called with a short status line per chunk (rendered or skipped).
+    it's called with a short status line per chunk (rendered or skipped). If
+    ``on_chunk`` is given, it's called once per chunk (rendered or skipped)
+    with the chunk id — used by the caller to track overall progress across
+    chapters rendered in parallel.
     """
     import time
 
@@ -124,6 +129,8 @@ def render_chapter_chunks(
         if wav_path.exists():
             if progress:
                 progress(f"[ch{cc.index:02d} {i}/{total}] {chunk.id} skipped (exists)")
+            if on_chunk:
+                on_chunk(chunk.id)
             continue
         t0 = time.monotonic()
         samples, sr = tts_callable(
@@ -139,6 +146,8 @@ def render_chapter_chunks(
         (out_dir / f"{chunk.id}.json").write_text(json.dumps(side, indent=2))
         if progress:
             progress(f"[ch{cc.index:02d} {i}/{total}] {chunk.id} rendered in {time.monotonic() - t0:.1f}s")
+        if on_chunk:
+            on_chunk(chunk.id)
 
 
 def _load_chatterbox(device: str) -> tuple[Any, TTSCallable]:
@@ -177,12 +186,17 @@ def render_work_dir(
     workers: int,
     voice_path: Path,
     tts_kwargs: dict[str, Any] | None = None,
+    verbose: bool = False,
 ) -> None:
     """Top-level entry. Loads Chatterbox once and renders every chapter.
 
     ``tts_kwargs`` is forwarded to every ``ChatterboxTTS.generate`` call
     (e.g. ``{"exaggeration": 0.8, "cfg_weight": 0.7, "temperature": 0.7}``).
+    When ``verbose`` is set, a global ``[render] done/total (pct%)`` line is
+    printed per chunk across all chapters (chapters render in parallel, so the
+    counter is guarded by a lock).
     """
+    import threading
     from concurrent.futures import ThreadPoolExecutor
 
     work_dir = Path(work_dir)
@@ -190,10 +204,28 @@ def render_work_dir(
     audio_root = work_dir / "audio" / "chunks"
     audio_root.mkdir(parents=True, exist_ok=True)
 
+    chunks_files = sorted(chunks_dir.glob("*.json"))
+
+    total_chunks = 0
+    if verbose:
+        for f in chunks_files:
+            total_chunks += len(ChapterChunks.model_validate_json(f.read_text()).chunks)
+
     _, tts_callable = _load_chatterbox(device)
 
     def _progress(line: str) -> None:
         print(line, flush=True)
+
+    lock = threading.Lock()
+    state = {"done": 0}
+
+    def _on_chunk(chunk_id: str) -> None:
+        if not verbose:
+            return
+        with lock:
+            state["done"] += 1
+            done = state["done"]
+        print(pct_line("render", done, total_chunks, chunk_id), flush=True)
 
     def _one(chunks_path: Path) -> None:
         cc = ChapterChunks.model_validate_json(chunks_path.read_text())
@@ -204,8 +236,9 @@ def render_work_dir(
             tts_callable=tts_callable,
             voice_conditioning=str(voice_path),
             progress=_progress,
+            on_chunk=_on_chunk if verbose else None,
             tts_kwargs=tts_kwargs,
         )
 
     with ThreadPoolExecutor(max_workers=workers) as ex:
-        list(ex.map(_one, sorted(chunks_dir.glob("*.json"))))
+        list(ex.map(_one, chunks_files))

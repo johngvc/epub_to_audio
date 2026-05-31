@@ -3,6 +3,7 @@ plaintext-ish book_full_text.md used by adaptation subagents."""
 from __future__ import annotations
 
 import warnings
+from collections.abc import Callable
 from pathlib import Path
 
 import ebooklib  # type: ignore[import-untyped]
@@ -17,6 +18,7 @@ from audiobook.parse_common import (  # noqa: E402
     likely_skip,
     strip_for_full_text,
 )
+from audiobook.utils.progress import pct_line  # noqa: E402
 from audiobook.utils.slugify import slugify  # noqa: E402
 
 
@@ -38,7 +40,13 @@ def _resolve_titles(book: epub.EpubBook) -> dict[str, str]:
     return titles
 
 
-def parse_epub(epub_path: Path, out_dir: Path) -> list[ChapterRaw]:
+def parse_epub(
+    epub_path: Path,
+    out_dir: Path,
+    *,
+    progress: Callable[[str], None] | None = None,
+    verbose: bool = False,
+) -> list[ChapterRaw]:
     """Parse an EPUB into per-chapter JSON files plus book_full_text.md."""
     epub_path = Path(epub_path)
     out_dir = Path(out_dir)
@@ -52,7 +60,9 @@ def parse_epub(epub_path: Path, out_dir: Path) -> list[ChapterRaw]:
     full_text_sections: list[str] = []
     index = 0
 
-    for spine_id, _linear in book.spine:
+    spine = list(book.spine)
+    total_spine = len(spine)
+    for pos, (spine_id, _linear) in enumerate(spine, 1):
         item = book.get_item_with_id(spine_id)
         if item is None or item.get_type() != ebooklib.ITEM_DOCUMENT:
             continue
@@ -69,6 +79,8 @@ def parse_epub(epub_path: Path, out_dir: Path) -> list[ChapterRaw]:
 
         text = soup.get_text(" ", strip=True)
         if likely_skip(title, text):
+            if verbose and progress:
+                progress(pct_line("parse", pos, total_spine, f"{title} (skipped)"))
             continue
 
         has_code, has_math, has_tables = detect_features(soup)
@@ -87,6 +99,8 @@ def parse_epub(epub_path: Path, out_dir: Path) -> list[ChapterRaw]:
         chapters.append(chapter)
 
         full_text_sections.append(f"# {title}\n\n{strip_for_full_text(str(soup))}")
+        if verbose and progress:
+            progress(pct_line("parse", pos, total_spine, title))
         index += 1
 
     (out_dir / "book_full_text.md").write_text("\n\n".join(full_text_sections) + "\n")

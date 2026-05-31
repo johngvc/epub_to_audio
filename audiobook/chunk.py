@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from pathlib import Path
 
 import pysbd  # type: ignore[import-untyped]
 
 from audiobook.models import ChapterAdapted, ChapterChunks, Chunk, PronunciationHint
+from audiobook.utils.progress import pct_line
 
 _SEGMENTER = pysbd.Segmenter(language="en", clean=False)
 
@@ -192,6 +194,8 @@ def chunk_work_dir(
     max_chars: int,
     paragraph_silence_ms: int,
     section_silence_ms: int,
+    progress: Callable[[str], None] | None = None,
+    verbose: bool = False,
 ) -> int:
     """Chunk every adapted file in work_dir. Skips chapters whose chunks already exist."""
     work_dir = Path(work_dir)
@@ -207,13 +211,19 @@ def chunk_work_dir(
             pron.append(PronunciationHint(**item))
 
     count = 0
-    for adapted_path in sorted(adapted_dir.glob("*.json")):
+    adapted_paths = sorted(adapted_dir.glob("*.json"))
+    total = len(adapted_paths)
+    for pos, adapted_path in enumerate(adapted_paths, 1):
         out_path = chunks_dir / adapted_path.name
         if out_path.exists():
+            if verbose and progress:
+                progress(pct_line("chunk", pos, total, f"{adapted_path.stem} (skipped)"))
             continue
         adapted = ChapterAdapted.model_validate_json(adapted_path.read_text())
         raw_path = raw_dir / adapted_path.name
         if not raw_path.exists():
+            if verbose and progress:
+                progress(pct_line("chunk", pos, total, f"{adapted_path.stem} (no raw; skipped)"))
             continue
         raw_data = json.loads(raw_path.read_text())
         chunks = chunk_chapter(
@@ -227,4 +237,7 @@ def chunk_work_dir(
         )
         out_path.write_text(chunks.model_dump_json(indent=2) + "\n")
         count += 1
+        if verbose and progress:
+            detail = f"{raw_data['title']} -> {len(chunks.chunks)} chunks"
+            progress(pct_line("chunk", pos, total, detail))
     return count

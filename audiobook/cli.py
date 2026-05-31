@@ -206,11 +206,16 @@ def parse(
     chapter_level: int | None = typer.Option(
         None, "--chapter-level", help="PDF only: heading level used as chapter boundaries (1-6)."
     ),
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v", help="Print per-section progress with completion %."
+    ),
 ) -> None:
     """Stage 1 — parse an EPUB or PDF into per-chapter JSON + book_full_text.md."""
     suffix = input_path.suffix.lower()
     if suffix == ".epub":
-        chapters = _parse_epub(input_path, out)
+        chapters = _parse_epub(
+            input_path, out, progress=lambda line: typer.echo(line, err=True), verbose=verbose
+        )
         if not chapters:
             typer.echo(
                 "warning: 0 chapters extracted — check the input or [book].skip_sections.",
@@ -232,6 +237,7 @@ def parse(
                 chapter_level=cl,
                 book_title=cfg.book.title or None,
                 progress=lambda line: typer.echo(line, err=True),
+                verbose=verbose,
             )
         except PdfParseError as exc:
             typer.echo(f"error: {exc}", err=True)
@@ -253,6 +259,9 @@ def parse(
 def adapt_cmd(
     work_dir: Path = typer.Argument(..., exists=True, file_okay=False),  # noqa: B008
     config: Path = typer.Option(Path("./config.toml"), "--config", exists=True),  # noqa: B008
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v", help="Print per-chapter progress with completion % and tokens."
+    ),
 ) -> None:
     """Stage 2 — adapt chapters in-process (mode = "api"). Agent mode is
     driven by an external orchestrator and cannot be run via this command."""
@@ -282,7 +291,9 @@ def adapt_cmd(
         )
         raise typer.Exit(2)
 
-    summary = run_adapt_api(work_dir, cfg=cfg, progress=lambda line: typer.echo(line))
+    summary = run_adapt_api(
+        work_dir, cfg=cfg, progress=lambda line: typer.echo(line), verbose=verbose
+    )
     typer.echo(
         f"adapt complete: succeeded={len(summary.succeeded)} "
         f"retried={len(summary.retried)} failed={len(summary.failed)} "
@@ -317,6 +328,9 @@ def merge_pron(work_dir: Path = typer.Argument(..., exists=True, file_okay=False
 def chunk_cmd(
     work_dir: Path = typer.Argument(..., exists=True, file_okay=False),  # noqa: B008
     config: Path = typer.Option(Path("./config.toml"), "--config", exists=True),  # noqa: B008
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v", help="Print per-chapter progress with completion %."
+    ),
 ) -> None:
     """Stage 3 — chunk adapted chapters into TTS-sized pieces."""
     cfg = load_config(config)
@@ -325,6 +339,8 @@ def chunk_cmd(
         max_chars=cfg.chunk.max_chars,
         paragraph_silence_ms=cfg.chunk.paragraph_silence_ms,
         section_silence_ms=cfg.chunk.section_silence_ms,
+        progress=(lambda line: typer.echo(line, err=True)) if verbose else None,
+        verbose=verbose,
     )
     typer.echo(f"chunked {n} chapters")
 
@@ -334,6 +350,9 @@ def render_cmd(
     work_dir: Path = typer.Argument(..., exists=True, file_okay=False),  # noqa: B008
     voice: str | None = typer.Option(None, "--voice", help="Saved voice name OR path"),
     config: Path = typer.Option(Path("./config.toml"), "--config", exists=True),  # noqa: B008
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v", help="Print global per-chunk progress with completion %."
+    ),
 ) -> None:
     """Stage 4 — render chunked text to WAVs. HOST ONLY (uses MPS).
 
@@ -360,6 +379,7 @@ def render_cmd(
             "cfg_weight": cfg.render.cfg_weight,
             "temperature": cfg.render.temperature,
         },
+        verbose=verbose,
     )
     typer.echo("render complete")
 
@@ -385,6 +405,9 @@ def assemble_cmd(
     out: Path = typer.Option(..., "--out"),  # noqa: B008
     cover: Path | None = typer.Option(None, "--cover", exists=True, dir_okay=False),  # noqa: B008
     config: Path = typer.Option(Path("./config.toml"), "--config", exists=True),  # noqa: B008
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v", help="Print per-chapter assembly progress with completion %."
+    ),
 ) -> None:
     """Stage 5 — assemble final .m4b with chapter markers and tags."""
     cfg = load_config(config)
@@ -406,6 +429,8 @@ def assemble_cmd(
         out_path=out,
         bitrate_kbps=cfg.assemble.audio_bitrate_kbps,
         cover_path=cover,
+        progress=(lambda line: typer.echo(line, err=True)) if verbose else None,
+        verbose=verbose,
     )
     typer.echo(f"wrote {out}")
 
