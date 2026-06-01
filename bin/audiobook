@@ -32,6 +32,9 @@ case "$sub1" in
   render)
     run_host "$@"
     ;;
+  lms-load|lms-unload)
+    run_host "$@"
+    ;;
   voice)
     case "$sub2" in
       preview|save|list|rm)

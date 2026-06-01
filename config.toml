@@ -47,6 +47,9 @@ context_window = 131072       # used to decide if book_full_text.md is included
 temperature = 0.3             # lower → more schema-compliant JSON
 max_output_tokens = 24576     # caps a single response (incl. reasoning tokens)
 request_timeout_s = 600       # generous; large chapters are slow on local GPU
+ttl_seconds = 300             # idle secs before LM Studio auto-unloads the model (0 = stay loaded)
+manage_model = true           # `run` loads the model before adapt, unloads after (frees RAM for render)
+# load_context_length = 32768 # load the model at this context (lms load -c); lower = much less RAM
 
 [chunk]
 # Affects how the adapted text is sliced into TTS-sized pieces.

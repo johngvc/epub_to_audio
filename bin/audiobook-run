@@ -112,6 +112,9 @@ declare -a STAGE_TIMES=()
 # bypasses the api-mode checks below. Read it unconditionally; an empty value
 # is fine (we treat it as "skip adapt").
 mode="$(read_toml_string "$CONFIG" adapt mode 2>/dev/null || true)"
+# Whether to auto load/unload the LM Studio model around the adapt stage (keeps
+# the LLM out of RAM during render). Empty/unset = enabled (default true).
+manage_model="$(read_toml_string "$CONFIG" adapt.api manage_model 2>/dev/null || true)"
 
 if (( ! SKIP_PREFLIGHT )); then
   info "preflight checks"
@@ -200,9 +203,13 @@ if (( ! SKIP_PREFLIGHT )); then
     fi
     if ! curl -s --max-time 5 "${base_url%/}/models" \
          | grep -q "\"id\": *\"${model//\//\\/}\""; then
-      err "model '$model' not loaded in LM Studio at $base_url"
-      err "  Load it in LM Studio, then re-run."
-      exit 1
+      if [[ "$manage_model" != "false" ]]; then
+        info "model '$model' not loaded yet — will load it before adapt"
+      else
+        err "model '$model' not loaded in LM Studio at $base_url"
+        err "  Load it in LM Studio (or set [adapt.api].manage_model = true), then re-run."
+        exit 1
+      fi
     fi
   fi
 
@@ -225,10 +232,14 @@ START_T=$(date +%s)
 run_stage 1 parse                bin/audiobook parse "$INPUT" --out "$WORK"
 
 if [[ "$mode" == "api" ]]; then
-  if [[ -n "$VOICE" ]]; then
-    run_stage 2 adapt               bin/audiobook adapt "$WORK" --config "$CONFIG"
-  else
-    run_stage 2 adapt               bin/audiobook adapt "$WORK" --config "$CONFIG"
+  if [[ "$manage_model" != "false" ]]; then
+    info "ensuring LM Studio model is loaded"
+    bin/audiobook lms-load --config "$CONFIG" || warn "lms-load failed; adapt will JIT-load on first request"
+  fi
+  run_stage 2 adapt               bin/audiobook adapt "$WORK" --config "$CONFIG"
+  if [[ "$manage_model" != "false" ]]; then
+    info "unloading LM Studio model to free RAM before render"
+    bin/audiobook lms-unload || warn "lms-unload failed"
   fi
 fi
 

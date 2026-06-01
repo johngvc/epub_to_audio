@@ -37,6 +37,15 @@ class AdaptApiConfig(_Strict):
     temperature: float = Field(default=0.3, ge=0.0, le=2.0)
     max_output_tokens: int = Field(default=8192, ge=256)
     request_timeout_s: int = Field(default=600, ge=10)
+    # Idle seconds before LM Studio auto-unloads a JIT-loaded model. Sent as the
+    # `ttl` field on each request. 0 disables (model stays loaded).
+    ttl_seconds: int = Field(default=300, ge=0)
+    # When true, `bin/audiobook run` loads the model before adapt and unloads it
+    # after, to keep the LLM out of RAM during render (host-only, needs `lms`).
+    manage_model: bool = True
+    # Context length to load the model with (via `lms load -c`). None = LM Studio
+    # default. Lower values dramatically cut KV-cache RAM.
+    load_context_length: int | None = Field(default=None, ge=512)
 
 
 class AdaptConfig(_Strict):
@@ -97,6 +106,7 @@ class ResolvedAdaptApi:
     temperature: float
     max_output_tokens: int
     request_timeout_s: int
+    ttl_seconds: int
 
 
 _ENV_MAP = {
@@ -121,4 +131,5 @@ def resolve_adapt_api(cfg: AdaptApiConfig) -> ResolvedAdaptApi:
         temperature=cfg.temperature,
         max_output_tokens=cfg.max_output_tokens,
         request_timeout_s=cfg.request_timeout_s,
+        ttl_seconds=cfg.ttl_seconds,
     )

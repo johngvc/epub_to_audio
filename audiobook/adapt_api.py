@@ -92,6 +92,10 @@ def _call_once(
     messages: list[dict[str, str]],
 ) -> tuple[str, int, int]:
     """Return (content, input_tokens, output_tokens)."""
+    # LM Studio honors a non-standard `ttl` field: a JIT-loaded model unloads
+    # after this many idle seconds. Passed via extra_body since the OpenAI SDK
+    # doesn't model it. 0 = leave the model loaded.
+    extra_body = {"ttl": api.ttl_seconds} if api.ttl_seconds > 0 else None
     response = client.chat.completions.create(
         model=api.model,
         messages=messages,
@@ -99,6 +103,7 @@ def _call_once(
         temperature=api.temperature,
         max_tokens=api.max_output_tokens,
         timeout=api.request_timeout_s,
+        extra_body=extra_body,
     )
     message = response.choices[0].message
     # LM Studio routes a reasoning model's output to `reasoning_content` even when

@@ -249,6 +249,9 @@ All knobs live in `config.toml`. The most useful ones:
 | `[adapt.api].temperature` | LLM creativity | Default 0.3 (strict JSON adherence) |
 | `[adapt.api].max_output_tokens` | Caps a single response (incl. reasoning tokens) | Default 24576. Must exceed a chapter's adapted length or the JSON truncates — see "Large chapters" |
 | `[adapt.api].request_timeout_s` | Per-chapter timeout | Default 600s; raise for very large chapters on slow GPUs |
+| `[adapt.api].ttl_seconds` | Idle seconds before LM Studio auto-unloads the JIT-loaded model (sent as `ttl` per request) | Default 300; 0 = stay loaded |
+| `[adapt.api].manage_model` | `run` loads the model before adapt and unloads it after, to free RAM for render | Default true; host-only, needs `lms` |
+| `[adapt.api].load_context_length` | Context length to load the model with (`lms load -c`) | Default unset (LM Studio default); lower = much less KV-cache RAM |
 | `[chunk].max_chars` | TTS chunk size in characters | 400 is stable; smaller = more chunks but more reliable |
 | `[chunk].paragraph_silence_ms` / `.section_silence_ms` | Pause durations between paragraphs / `---` section breaks | |
 | `[render].device` | `"mps"`/`"cuda"`/`"cpu"` | Apple Silicon = `mps`; NVIDIA = `cuda` |
@@ -275,6 +278,24 @@ comes back empty (`length_anomaly`). The defaults (`context_window = 131072`,
 `max_output_tokens = 24576`) assume a large-context local model; load your model in LM
 Studio with a generous context length to match. Chapters that still don't fit need to be
 split before adaptation (not yet automated).
+
+### Controlling RAM (model load / unload)
+
+Adapt (the LLM) and render (Chatterbox TTS) run in different stages, so the LLM shouldn't
+occupy RAM during render. `bin/audiobook run` handles this automatically when
+`[adapt.api].manage_model = true` (default): it loads the model before adapt and unloads it
+afterward via the `lms` CLI. Each adapt request also carries a `ttl` so the model
+self-unloads after `ttl_seconds` of idle, which covers stage-by-stage runs.
+
+Manual control (host-only; no-op if `lms` isn't installed):
+
+```sh
+bin/audiobook lms-load --context-length 32768   # load the configured model, small KV cache
+bin/audiobook lms-unload                         # free it
+```
+
+Loading with a smaller `--context-length` (or `[adapt.api].load_context_length`) is the
+single biggest RAM lever — the KV-cache reservation scales with context.
 
 ### Picking a model (for `[adapt.api].model`)
 
@@ -328,6 +349,8 @@ bin/audiobook render ./work --voice NAME              # Host (MPS) — Stage 4
 bin/audiobook validate-render ./work                  # Docker — per-chunk WAV check
 bin/audiobook assemble ./work --out ./out/book.m4b    # Docker — Stage 5
 bin/audiobook status ./work                           # Read work/state.json
+bin/audiobook lms-load                                # Host — load configured LLM (frees you from preloading)
+bin/audiobook lms-unload                              # Host — unload all LLMs to free RAM
 ```
 
 Add `-v` / `--verbose` to `parse`, `adapt`, `chunk`, `render`, or `assemble` for per-step progress with completion percentages.

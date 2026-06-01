@@ -446,5 +446,37 @@ def status(work_dir: Path = typer.Argument(..., exists=True, file_okay=False)) -
     typer.echo(state.model_dump_json(indent=2))
 
 
+@app.command("lms-load")
+def lms_load_cmd(
+    config: Path = typer.Option(Path("./config.toml"), "--config"),  # noqa: B008
+    context_length: int | None = typer.Option(
+        None, "--context-length", help="Override [adapt.api].load_context_length."
+    ),
+    ttl: int | None = typer.Option(None, "--ttl", help="Override idle TTL seconds."),
+) -> None:
+    """Load the configured LM Studio model if not already loaded (host-only).
+
+    No-op when the `lms` CLI is absent. Loading with a smaller --context-length
+    sharply reduces KV-cache RAM.
+    """
+    from audiobook.config import resolve_adapt_api
+    from audiobook.lmstudio_ctl import ensure_loaded
+
+    cfg = load_config(config) if config.exists() else load_config_default()
+    api = resolve_adapt_api(cfg.adapt.api)
+    ctx = context_length if context_length is not None else cfg.adapt.api.load_context_length
+    t = ttl if ttl is not None else api.ttl_seconds
+    status = ensure_loaded(api.model, context_length=ctx, ttl=t)
+    typer.echo(f"lms-load ({api.model or 'no model'}): {status}")
+
+
+@app.command("lms-unload")
+def lms_unload_cmd() -> None:
+    """Unload all LM Studio models to free RAM (host-only; no-op without `lms`)."""
+    from audiobook.lmstudio_ctl import unload_all
+
+    typer.echo(f"lms-unload: {unload_all()}")
+
+
 if __name__ == "__main__":
     app()
