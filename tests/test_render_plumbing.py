@@ -128,13 +128,12 @@ def test_cli_render_resolves_voice_name(tmp_path, monkeypatch):
     called = {}
     import audiobook.cli as cli_mod
 
-    def fake_render(work_dir, *, device, workers, voice_path, tts_kwargs=None, verbose=False,
-                    max_silence_ms=600):
-        called["voice_path"] = voice_path
+    def fake_render(work_dir, *, engine="chatterbox", device, workers, voice_conditioning,
+                    tts_kwargs=None, verbose=False, max_silence_ms=600):
+        called["engine"] = engine
+        called["voice_conditioning"] = voice_conditioning
         called["work_dir"] = work_dir
         called["tts_kwargs"] = tts_kwargs
-        called["verbose"] = verbose
-        called["max_silence_ms"] = max_silence_ms
 
     monkeypatch.setattr(cli_mod, "render_work_dir", fake_render)
     monkeypatch.chdir(tmp_path)
@@ -146,9 +145,38 @@ def test_cli_render_resolves_voice_name(tmp_path, monkeypatch):
     runner = CliRunner()
     result = runner.invoke(app, ["render", "./work", "--voice", "alice"])
     assert result.exit_code == 0, result.stdout
-    assert called["voice_path"] == voice
-    # Sanity check that the config-derived TTS params reach render_work_dir.
+    assert called["engine"] == "chatterbox"
+    assert called["voice_conditioning"] == str(voice)  # resolved WAV path
     assert set(called["tts_kwargs"].keys()) == {"exaggeration", "cfg_weight", "temperature"}
+
+
+def test_cli_render_kokoro_uses_voice_name(tmp_path, monkeypatch):
+    """`render --engine kokoro --voice bm_george` passes the voice NAME (not a
+    WAV path) and Kokoro tts_kwargs, skipping the WAV voice library."""
+    (tmp_path / "config.toml").write_text("")
+    (tmp_path / "work").mkdir()
+
+    called = {}
+    import audiobook.cli as cli_mod
+
+    def fake_render(work_dir, *, engine="chatterbox", device, workers, voice_conditioning,
+                    tts_kwargs=None, verbose=False, max_silence_ms=600):
+        called["engine"] = engine
+        called["voice_conditioning"] = voice_conditioning
+        called["tts_kwargs"] = tts_kwargs
+
+    monkeypatch.setattr(cli_mod, "render_work_dir", fake_render)
+    monkeypatch.chdir(tmp_path)
+
+    from typer.testing import CliRunner
+
+    from audiobook.cli import app
+
+    result = CliRunner().invoke(app, ["render", "./work", "--engine", "kokoro", "--voice", "bm_george"])
+    assert result.exit_code == 0, result.stdout
+    assert called["engine"] == "kokoro"
+    assert called["voice_conditioning"] == "bm_george"
+    assert "speed" in called["tts_kwargs"]
 
 
 def test_render_chapter_chunks_forwards_tts_kwargs(scratch: Path) -> None:

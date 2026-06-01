@@ -66,7 +66,10 @@ class ChunkConfig(_Strict):
 
 
 class RenderConfig(_Strict):
+    engine: Literal["chatterbox", "kokoro"] = "chatterbox"
     voice: str = ""             # saved voice name; empty = voices/default.wav fallback chain
+    kokoro_voice: str = "af_heart"   # built-in Kokoro voice (used when engine = "kokoro")
+    kokoro_speed: float = Field(default=1.0, gt=0.0, le=3.0)
     device: str = "mps"
     workers: int = Field(default=2, ge=1, le=8)
     exaggeration: float = 0.4

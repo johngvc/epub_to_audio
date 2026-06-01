@@ -78,7 +78,7 @@ def voice_preview(
     """
     import soundfile as sf  # type: ignore[import-untyped]
 
-    from audiobook.render import _load_chatterbox
+    from audiobook.tts import _load_chatterbox
     from audiobook.voice_library import NoVoiceConfigured, resolve_voice_path
 
     cfg = load_config(config) if config.exists() else load_config_default()
@@ -131,7 +131,7 @@ def voice_save(
 
     if preview:
         # Reuse the existing voice preview implementation.
-        from audiobook.render import _load_chatterbox  # type: ignore[no-untyped-call]
+        from audiobook.tts import _load_chatterbox  # type: ignore[no-untyped-call]
         import soundfile as sf  # type: ignore[import-untyped]
 
         preview_text = (
@@ -348,7 +348,12 @@ def chunk_cmd(
 @app.command("render")
 def render_cmd(
     work_dir: Path = typer.Argument(..., exists=True, file_okay=False),  # noqa: B008
-    voice: str | None = typer.Option(None, "--voice", help="Saved voice name OR path"),
+    voice: str | None = typer.Option(
+        None, "--voice", help="Chatterbox: saved name/WAV path. Kokoro: built-in voice name."
+    ),
+    engine: str | None = typer.Option(
+        None, "--engine", help="TTS engine: chatterbox | kokoro (default: [render].engine)."
+    ),
     config: Path = typer.Option(Path("./config.toml"), "--config", exists=True),  # noqa: B008
     verbose: bool = typer.Option(
         False, "--verbose", "-v", help="Print global per-chunk progress with completion %."
@@ -356,29 +361,40 @@ def render_cmd(
 ) -> None:
     """Stage 4 — render chunked text to WAVs. HOST ONLY (uses MPS).
 
-    The voice can be a saved name (from `audiobook voice list`), an explicit
-    path, or omitted to fall back to [render].voice in config, voices/default.wav,
-    or legacy voice/reference.wav.
+    Chatterbox clones a reference voice (saved name, path, or the [render].voice
+    / voices/default.wav fallback chain). Kokoro uses a built-in voice name
+    (--voice or [render].kokoro_voice), ignoring the WAV voice library.
     """
-    from audiobook.voice_library import NoVoiceConfigured, resolve_voice_path
-
     cfg = load_config(config)
-    try:
-        voice_path = resolve_voice_path(voice, cfg=cfg, project_root=Path.cwd())
-    except NoVoiceConfigured as exc:
-        typer.echo(f"error: {exc}", err=True)
-        raise typer.Exit(2) from None
+    eng = engine or cfg.render.engine
 
-    render_work_dir(
-        work_dir,
-        device=cfg.render.device,
-        workers=cfg.render.workers,
-        voice_path=voice_path,
-        tts_kwargs={
+    if eng == "kokoro":
+        voice_conditioning: object = voice or cfg.render.kokoro_voice
+        tts_kwargs: dict[str, object] = {"speed": cfg.render.kokoro_speed}
+    elif eng == "chatterbox":
+        from audiobook.voice_library import NoVoiceConfigured, resolve_voice_path
+
+        try:
+            voice_conditioning = str(resolve_voice_path(voice, cfg=cfg, project_root=Path.cwd()))
+        except NoVoiceConfigured as exc:
+            typer.echo(f"error: {exc}", err=True)
+            raise typer.Exit(2) from None
+        tts_kwargs = {
             "exaggeration": cfg.render.exaggeration,
             "cfg_weight": cfg.render.cfg_weight,
             "temperature": cfg.render.temperature,
-        },
+        }
+    else:
+        typer.echo(f"error: unknown --engine {eng!r} (expected chatterbox|kokoro)", err=True)
+        raise typer.Exit(2)
+
+    render_work_dir(
+        work_dir,
+        engine=eng,
+        device=cfg.render.device,
+        workers=cfg.render.workers,
+        voice_conditioning=voice_conditioning,
+        tts_kwargs=tts_kwargs,
         verbose=verbose,
         max_silence_ms=cfg.render.max_silence_ms,
     )

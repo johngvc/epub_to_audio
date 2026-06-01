@@ -7,14 +7,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-import numpy as np
 import soundfile as sf  # type: ignore[import-untyped]
 
 from audiobook.models import ChapterChunks
+from audiobook.tts import TTSCallable, load_engine
 from audiobook.utils.audio import compress_silence, write_wav_with_trailing_silence
 from audiobook.utils.progress import pct_line
-
-TTSCallable = Callable[..., tuple[np.ndarray, int]]
 
 RenderErrorKind = Literal["missing_wav", "unreadable_wav", "zero_duration"]
 
@@ -152,52 +150,26 @@ def render_chapter_chunks(
             on_chunk(chunk.id)
 
 
-def _load_chatterbox(device: str) -> tuple[Any, TTSCallable]:
-    """Import torch + chatterbox lazily and return (model, callable).
-
-    Lazy import: the Docker image does NOT have torch installed, so importing
-    audiobook.render must succeed without it. This function only runs on the
-    host where the [render] extra is installed.
-    """
-    import os
-    # Silence chatterbox's per-step sampling progress bars; they spam non-TTY logs.
-    os.environ.setdefault("TQDM_DISABLE", "1")
-    os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
-    try:
-        import torch  # type: ignore[import-not-found]  # noqa: F401
-        from chatterbox.tts import ChatterboxTTS  # type: ignore[import-not-found]
-    except ImportError as exc:
-        raise RuntimeError(
-            "Stage 4 requires the [render] extra. Run scripts/host-install.sh on the host."
-        ) from exc
-
-    model = ChatterboxTTS.from_pretrained(device=device)
-
-    def _call(text: str, *, voice_conditioning: Any, **kwargs: Any) -> tuple[np.ndarray, int]:
-        wav = model.generate(text=text, audio_prompt_path=voice_conditioning, **kwargs)
-        # Chatterbox returns a torch.Tensor at 24kHz mono.
-        return wav.squeeze().cpu().numpy().astype(np.float32), 24000
-
-    return model, _call
-
-
 def render_work_dir(
     work_dir: Path,
     *,
     device: str,
     workers: int,
-    voice_path: Path,
+    voice_conditioning: Any,
+    engine: str = "chatterbox",
     tts_kwargs: dict[str, Any] | None = None,
     verbose: bool = False,
     max_silence_ms: int = 600,
 ) -> None:
-    """Top-level entry. Loads Chatterbox once and renders every chapter.
+    """Top-level entry. Loads the selected TTS engine once and renders every chapter.
 
-    ``tts_kwargs`` is forwarded to every ``ChatterboxTTS.generate`` call
-    (e.g. ``{"exaggeration": 0.8, "cfg_weight": 0.7, "temperature": 0.7}``).
-    When ``verbose`` is set, a global ``[render] done/total (pct%)`` line is
-    printed per chunk across all chapters (chapters render in parallel, so the
-    counter is guarded by a lock).
+    ``engine`` selects "chatterbox" or "kokoro". ``voice_conditioning`` is the
+    engine-appropriate voice: a reference-WAV path string for Chatterbox, or a
+    built-in voice name (e.g. "bm_george") for Kokoro. ``tts_kwargs`` is
+    forwarded to every generate call (Chatterbox: exaggeration/cfg_weight/
+    temperature; Kokoro: speed). When ``verbose`` is set, a global
+    ``[render] done/total (pct%)`` line is printed per chunk (chapters render in
+    parallel, so the counter is guarded by a lock).
     """
     import threading
     from concurrent.futures import ThreadPoolExecutor
@@ -214,7 +186,8 @@ def render_work_dir(
         for f in chunks_files:
             total_chunks += len(ChapterChunks.model_validate_json(f.read_text()).chunks)
 
-    _, tts_callable = _load_chatterbox(device)
+    voice_str = voice_conditioning if isinstance(voice_conditioning, str) else None
+    tts_callable = load_engine(engine, device, voice=voice_str)
 
     def _progress(line: str) -> None:
         print(line, flush=True)
@@ -237,7 +210,7 @@ def render_work_dir(
             cc,
             out_dir=out_dir,
             tts_callable=tts_callable,
-            voice_conditioning=str(voice_path),
+            voice_conditioning=voice_conditioning,
             progress=_progress,
             on_chunk=_on_chunk if verbose else None,
             tts_kwargs=tts_kwargs,
