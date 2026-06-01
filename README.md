@@ -159,12 +159,29 @@ All knobs live in `config.toml`. The most useful (defaults shown are the values 
 | `[adapt.api].load_context_length` | Load context (`lms load -c`) | Unset = LM Studio default; lower = much less KV-cache RAM |
 | `[chunk].max_chars` | TTS chunk size | 400 is stable |
 | `[chunk].paragraph_silence_ms` / `.section_silence_ms` | Pauses between paragraphs / `---` breaks | |
+| `[render].engine` | TTS engine: `chatterbox` or `kokoro` | Default `chatterbox`; see [TTS engines](#tts-engines) |
 | `[render].device`, `.workers` | `mps`/`cuda`/`cpu`; parallel TTS workers | Apple Silicon = `mps`; 1-2 workers per GPU |
 | `[render].exaggeration`, `.cfg_weight`, `.temperature` | Chatterbox voice knobs | Tuned for spoken word |
+| `[render].kokoro_voice`, `.kokoro_speed` | Kokoro built-in voice + speed | e.g. `af_heart`, `bm_george`; speed 1.0 |
 | `[assemble].audio_bitrate_kbps` | AAC bitrate | 64 kbps fine for speech |
 | `[parse].parser`, `.footnote_policy`, `.chapter_level` | PDF ingestion | EPUB ignores these |
 
 **Env-var overrides** for `[adapt.api]` (only when set and non-empty): `OPENAI_BASE_URL` → `base_url`, `OPENAI_MODEL` → `model`, `OPENAI_API_KEY` → `api_key`.
+
+## TTS engines
+
+Stage 4 supports two engines, selected by `[render].engine` or `render --engine`:
+
+- **chatterbox** (default) — clones a narrator voice from a reference WAV (the voice
+  library / `--voice` WAV). Runs on MPS.
+- **kokoro** — fast 82M model with ~50 fixed built-in voices (no cloning). Pick one
+  with `[render].kokoro_voice` or `--voice` (e.g. `bm_george`, `af_heart`). Install
+  the extra: `uv pip install -e '.[kokoro]'`. On Apple Silicon it runs on **CPU**
+  (its iSTFT op isn't implemented on MPS) — still ~8× realtime.
+
+```sh
+bin/audiobook render ./work --engine kokoro --voice bm_george
+```
 
 ## Controlling RAM
 
