@@ -1,370 +1,246 @@
 # epub_to_audio
 
-Local-first pipeline that converts EPUB books into `.m4b` audiobooks. Uses Chatterbox TTS for narration (on-device, Apple Silicon MPS) and either a local OpenAI-compatible LLM (LM Studio) or Claude Code subagents for content adaptation.
+Local-first pipeline that turns an **EPUB or PDF into a tagged `.m4b` audiobook** with chapter markers — no cloud, no API cost. Narration is on-device via Chatterbox TTS (Apple Silicon MPS); content adaptation runs against either a local OpenAI-compatible LLM (LM Studio) or Claude Code subagents.
 
 See `epub_to_audio_spec.md` for the full spec, `docs/superpowers/specs/` for design decisions, and `docs/superpowers/plans/` for implementation plans.
 
 ## How it runs
 
-- **One Docker container** (`audiobook:dev`) handles parse, validation, chunk, and assemble.
-- **The host** runs Stage 4 (TTS) so it can use Apple Silicon's MPS GPU, plus either Claude Code or the local LM Studio HTTP API for Stage 2.
-- **One wrapper**, `bin/audiobook`, routes each subcommand to the right place automatically.
+| Where | Stages |
+|---|---|
+| **Docker** (`audiobook:dev`) | parse, validate-adapted, merge-pronunciation, chunk, validate-render, assemble, status, `voice validate` |
+| **Host** (`uv` venv, needs MPS / LM Studio) | render (TTS), api-mode adapt, `lms-load`/`lms-unload`, `voice` save/list/rm/preview |
 
-You never need to type `docker compose` or `uv run` directly.
+`bin/audiobook` routes every subcommand automatically — you never type `docker compose` or `uv run`.
 
-## Quick start (fully offline)
+## Prerequisites
 
-EPUB in → `.m4b` out, no cloud. Everything runs locally: Docker, a local LLM (LM Studio), and on-device TTS.
+macOS host:
 
-1. **Install** (macOS, one-time):
+- [colima](https://github.com/abiosoft/colima) + Docker CLI — `brew install colima docker docker-compose`
+- [uv](https://github.com/astral-sh/uv) — `brew install uv`
+- One of, for Stage 2 (adapt):
+  - **api mode** (unattended, default): [LM Studio](https://lmstudio.ai/) with a capable model loaded — see [Picking a model](#picking-a-model).
+  - **agent mode** (interactive): [Claude Code](https://docs.claude.com/en/docs/claude-code) on a Pro/Max plan — see [Agent mode](#agent-mode).
+- (Optional) tmux — `bin/dev` uses it if present.
+
+## Quick start
+
+The one-command happy path, api mode:
+
+1. **Install** (one-time):
    ```sh
-   brew install colima docker docker-compose uv   # runtime
-   # + install LM Studio: https://lmstudio.ai/
-   bin/dev                  # start Colima, build the Docker image
+   brew install colima docker docker-compose uv
+   bin/dev                  # start Colima, build the audiobook:dev image
    scripts/host-install.sh  # create .venv (torch + chatterbox + openai)
    ```
 
-2. **Add your inputs:**
+2. **Add inputs:**
    ```
-   input/book.epub       # the book
-   voice/reference.wav   # 10–15s mono WAV of the narrator voice
+   input/book.epub   (or input/book.pdf)   # the book
+   voice/reference.wav                      # 10-15s mono WAV of the narrator
    ```
-   Not a WAV? Convert (e.g. from Voice Memos `.m4a`):
+   Not a WAV? Convert (e.g. Voice Memos `.m4a`):
    ```sh
    afconvert -f WAVE -d LEI16@24000 -c 1 voice/input.m4a voice/reference.wav
    ```
 
-3. **Edit `config.toml`** — set the book metadata and confirm offline mode:
+3. **Edit `config.toml`** — set metadata and confirm offline mode (full key list under [Configuration](#configuration)):
    ```toml
    [book]
    title  = "Your Book Title"
    author = "The Author"
 
    [adapt]
-   mode = "api"                      # fully offline (local LLM)
+   mode = "api"                      # "api" = local LLM, unattended; "agent" = Claude Code
 
    [adapt.api]
    base_url = "http://localhost:1234/v1"
    model    = "qwen3.6-35b-a3b-mtp"  # the model id loaded in LM Studio
    ```
 
-4. **Start LM Studio**, load that model, and confirm its local server is running at `http://localhost:1234`.
+4. **Start LM Studio**, load that model, and confirm its server is up at the base URL.
 
-5. **Check the voice** (cheap; do this before the multi-hour render):
+5. **Check the voice** (cheap — do this before the multi-hour render):
    ```sh
    bin/audiobook voice validate ./voice/reference.wav
    bin/audiobook voice preview  ./voice/reference.wav
    ```
-   Listen to `voice/preview.wav`. Re-record if it sounds wrong.
+   Listen to `voice/preview.wav`; re-record if it sounds wrong.
 
 6. **Run everything:**
    ```sh
    bin/audiobook run
    ```
-   Runs all stages (parse → adapt → chunk → render → assemble) and writes `out/book.m4b`. Render takes ~2–4h on Apple Silicon. Every stage is idempotent — re-run `bin/audiobook run` to resume after an interruption.
+   Defaults: `input/book.epub` (then `input/book.pdf`) → `out/book.m4b`, work dir `./work`, config `./config.toml`. Override with `--out`, `--work`, `--config`, `--voice`. Use `--fresh` to wipe `work/` first, `--skip-preflight` to bypass dependency checks.
 
-That's it. For per-stage control, multiple voices, model choice, and every config knob, read on.
+`run` auto-installs prerequisites (Colima, Docker image, host venv), runs all 8 stages in order, and aborts on the first failure with a resume hint. Render is ~2-4h on Apple Silicon. **Every stage is idempotent** — re-run to resume after an interruption.
 
-## Prerequisites
+## Input formats
 
-On the host (macOS):
-
-- [colima](https://github.com/abiosoft/colima) + Docker CLI — `brew install colima docker docker-compose`
-- [uv](https://github.com/astral-sh/uv) — `brew install uv` (required for Stage 4 / TTS and for api-mode adapt)
-- One of (for Stage 2 adapt):
-  - **API mode (recommended for unattended runs)**: [LM Studio](https://lmstudio.ai/) with a capable model loaded — see "Picking a model" below
-  - **Agent mode (interactive)**: [Claude Code](https://docs.claude.com/en/docs/claude-code) logged in with a Pro or Max subscription
-- (Optional) tmux — `bin/dev` uses it if present.
-
-## First-time setup
+**EPUB** (default) and **PDF**. Drop the file at `input/book.epub` or `input/book.pdf`, or pass a path to `run`/`parse`. PDF knobs live in `config.toml`'s `[parse]` block and are overridable per run:
 
 ```sh
-bin/dev                  # starts Colima, builds the Docker image, opens tmux
-scripts/host-install.sh  # creates .venv with torch + chatterbox + openai (api mode)
+bin/audiobook parse ./input/book.pdf --parser auto --footnote-policy skip --chapter-level 1
 ```
 
----
+**Chapter splitting (PDF).** Chapters come from the PDF's **embedded outline (bookmarks)** when present — the reliable path for code-heavy books, where literal `#` code comments would otherwise be misread as Markdown headings and shatter the book into bogus sections. Without an outline it falls back to Markdown headings (H1, else H2).
 
-## How to use
+| Flag | Values | Default / notes |
+|---|---|---|
+| `--parser` | `auto` \| `pymupdf` \| `marker` | `auto` extracts via pymupdf4llm and warns on low-quality signals. `marker` is deferred and currently errors. |
+| `--footnote-policy` | `inline` \| `endnote` \| `skip` | `skip` |
+| `--chapter-level` | `1`-`6` | Forces a heading level and **bypasses the outline**. Unset: outline if present, else H1, else H2. |
 
-End-to-end run from a fresh checkout, in **API mode** (the unattended path):
+**Not supported:** scanned/image-only PDFs (no OCR — fails clearly) and encrypted PDFs (decrypt first, e.g. `qpdf`). EPUB ignores all `[parse]` options.
 
-### 1. Edit `config.toml`
+## Manual stages
 
-Open `config.toml`. The fields marked `TWEAK` are the ones you almost always change:
-
-```toml
-[book]
-title  = "Your Book Title"        # embedded in the final .m4b metadata
-author = "The Author"
-narrator = ""                     # optional credit
-
-[adapt]
-mode = "api"                      # "api" = unattended; "agent" = Claude Code drives
-
-[adapt.api]
-base_url = "http://localhost:1234/v1"
-model    = "qwen3.6-35b-a3b-mtp"  # whichever model you have loaded in LM Studio
-```
-
-Everything else has sensible defaults. Full key-by-key reference is at the bottom of this section.
-
-### 2. Drop your inputs in place
-
-```
-input/book.epub          # your EPUB
-voice/reference.wav      # 10-15s mono WAV of the narrator voice (any audio format also works)
-```
-
-**Input formats:** `.epub` (default) and `.pdf`. For PDF, name the file `input/book.pdf`
-(or pass the path: `bin/audiobook run ./input/book.pdf`). PDF options live in
-`config.toml`'s `[parse]` block, overridable per run:
-
-    bin/audiobook parse ./input/book.pdf --parser auto --footnote-policy skip --chapter-level 1
-
-Chapters come from the PDF's **embedded outline (bookmarks)** when one is present — the
-reliable path for code-heavy books, where `#` code comments would otherwise be misread as
-Markdown headings and shred the book into hundreds of bogus sections. Without an outline,
-it falls back to splitting on Markdown headings.
-
-- `--parser auto|pymupdf|marker` — `auto` (default) extracts with pymupdf4llm and warns
-  if the result looks low-quality. `marker` (better multi-column/equation handling) is
-  deferred to a future release and currently errors.
-- `--footnote-policy inline|endnote|skip` — default `skip`.
-- `--chapter-level N` — force a Markdown heading level (1–6) as chapter boundaries,
-  bypassing the outline. Without it: outline if present, else H1, else H2.
-
-**Not supported:** scanned/image-only PDFs (no OCR — fails with a clear message) and
-encrypted PDFs (decrypt first, e.g. with `qpdf`).
-
-If your recording is in m4a (Voice Memos) or another format, convert:
+To drive the pipeline stage by stage (same order as `run`):
 
 ```sh
-afconvert -f WAVE -d LEI16@24000 -c 1 voice/JohnVoiceRecording.m4a voice/reference.wav
+bin/audiobook parse ./input/book.epub --out ./work   # 1  Docker
+bin/audiobook adapt ./work                            # 2  Host  (api mode only)
+bin/audiobook validate-adapted ./work                 # 3  Docker (gate: exit 0/1)
+bin/audiobook merge-pronunciation ./work              # 4  Docker
+bin/audiobook chunk ./work                            # 5  Docker
+bin/audiobook render ./work --voice default           # 6  Host (MPS)
+bin/audiobook validate-render ./work                  # 7  Docker (gate: exit 0/1)
+bin/audiobook assemble ./work --out ./out/book.m4b    # 8  Docker
 ```
 
-### 3. Start LM Studio and load the model
+`assemble` reads `title`/`author`/`narrator` from `[book]`; pass `--title`/`--author`/`--narrator` to override, `--cover PATH` to embed art. Every stage skips chapters/chunks whose outputs already exist and pass validation, so re-running resumes; `adapt` re-runs only the missing/invalid chapters.
 
-Launch LM Studio, load the model named in `[adapt.api].model`, and confirm the local server is running at the base URL (default `http://localhost:1234`).
+**Progress:** add `-v` / `--verbose` to `parse`, `adapt`, `chunk`, `render`, or `assemble` for per-step lines with completion percentages (e.g. `[render] 152/387 (39%)`). Default output is unchanged.
 
-### 4. Validate the voice reference
+## Iterating on quality
 
-```sh
-bin/audiobook voice validate ./voice/reference.wav
-bin/audiobook voice preview  ./voice/reference.wav
-```
+If a chapter sounds off, before re-rendering:
 
-Listen to `voice/preview.wav`. If it sounds wrong, re-record before spending hours on render.
+1. Inspect `work/chapters/adapted/NN_*.json` — the exact text Chatterbox will speak.
+2. Inspect `work/pronunciation.json` — substitutions applied to every chunk.
+3. Edit either by hand, **or** delete the file and re-run the prior stage.
 
-### 5. Run the pipeline
+Because stages are idempotent, only the touched chapters/chunks are redone.
 
-**One command:**
+## Voices
 
-```sh
-bin/audiobook run
-```
-
-Defaults: reads `./input/book.epub`, writes `./out/book.m4b`, uses `./work` as the work directory, reads `./config.toml`. Override any of these with `--out`, `--work`, `--config`, `--voice`. Pass `--fresh` to wipe the work directory first, or `--skip-preflight` to bypass dependency checks.
-
-The orchestrator auto-installs anything it needs: starts Colima on macOS, builds the Docker image, creates the host venv, installs the `[api]` extra. It then runs all 8 stages in sequence (parse → adapt → validate-adapted → merge-pronunciation → chunk → render → validate-render → assemble), aborting on the first failure with a hint to resume. Re-running picks up where the previous run stopped (every stage is idempotent).
-
-**Or run each stage manually:**
-
-```sh
-bin/audiobook parse ./input/book.epub --out ./work
-bin/audiobook adapt ./work
-bin/audiobook validate-adapted ./work
-bin/audiobook merge-pronunciation ./work
-bin/audiobook chunk ./work
-bin/audiobook render ./work --voice default
-bin/audiobook validate-render ./work
-bin/audiobook assemble ./work --out ./out/book.m4b
-```
-
-`title`/`author` for `assemble` come from `config.toml`'s `[book]` block; pass `--title`/`--author` to override per-run.
-
-**Progress output:** add `--verbose` / `-v` to `parse`, `adapt`, `chunk`, `render`, or
-`assemble` to print per-step progress with completion percentages. Default output is
-unchanged — verbose only adds lines:
-
-```
-[parse]    6/29 (21%) Chapter 1: Introduction to Artificial Intelligence
-[adapt]    2/2 (100%) 01_chapter-2 ok in=20964 out=12038 tok
-[chunk]    1/2 (50%) Chapter 1 -> 136 chunks
-[render]   152/387 (39%) 0152
-[assemble] 2/2 (100%) 01_chapter-2-...
-```
-
-### 6. Iterating on quality
-
-If a chapter sounds off when read aloud, before re-rendering:
-
-1. Inspect `work/chapters/adapted/NN_*.json` (the text Chatterbox will speak).
-2. Inspect `work/pronunciation.json` (substitutions applied to every chunk).
-3. Edit either by hand, OR delete the file and re-run the prior stage.
-
-The pipeline is idempotent — every stage skips chapters/chunks whose outputs already exist and pass validation. `bin/audiobook adapt ./work` re-runs only the missing/invalid chapters.
-
-### Working with voices
-
-Saved voices live in `voices/<name>.wav` (24 kHz mono PCM). Raw recordings can stay in `voice/` — they're separate from the curated library.
+Saved voices live in `voices/<name>.wav` (24 kHz mono PCM); raw recordings can stay in `voice/`.
 
 | Command | What it does |
 |---|---|
-| `bin/audiobook voice save SAMPLE --name NAME` | Converts a raw sample to 24 kHz mono PCM and saves it as `voices/NAME.wav`. Add `--force` to overwrite, `--preview` to also generate a sample audio file. |
-| `bin/audiobook voice list` | Lists all saved voices with duration / sample rate / size. The one that `audiobook run` would pick by default is marked with `*`. |
-| `bin/audiobook voice rm NAME` | Deletes a saved voice. |
-| `bin/audiobook voice preview --voice NAME` | Generates a 30-second preview using a saved voice. Also accepts a path. |
-| `bin/audiobook voice validate PATH` | Checks an arbitrary audio file's format/duration/SNR/clipping. |
+| `bin/audiobook voice save SAMPLE --name NAME` | Convert a raw sample to 24 kHz mono PCM, save as `voices/NAME.wav`. `--force` to overwrite, `--preview` to also write a sample. |
+| `bin/audiobook voice list` | List saved voices (duration / sample rate / size); marks the default pick with `*`. |
+| `bin/audiobook voice rm NAME` | Remove a voice (`--force` skips the confirm). |
+| `bin/audiobook voice preview [REF] --voice NAME` | Render a short MPS preview to tune accent/params. |
+| `bin/audiobook voice validate PATH` | Check a WAV's format / duration / SNR / clipping. |
 
-**Picking a voice for a run:**
+Pick a voice with `bin/audiobook run --voice grandpa` or pin `[render].voice = "grandpa"`.
 
-```sh
-bin/audiobook run --voice grandpa             # uses voices/grandpa.wav
-```
+**Resolution order:** `--voice` arg → `[render].voice` → `voices/default.wav` → `voice/reference.wav` (legacy).
 
-Or pin a default in `config.toml`:
+## Configuration
 
-```toml
-[render]
-voice = "grandpa"
-```
-
-Resolution order: `--voice` arg → `[render].voice` config → `voices/default.wav` → `voice/reference.wav` (legacy).
-
-### Configuration reference
-
-All knobs live in `config.toml`. The most useful ones:
+All knobs live in `config.toml`. The most useful (defaults shown are the values in the shipped `config.toml`):
 
 | Key | Purpose | Notes |
 |---|---|---|
-| `[book].title`, `.author`, `.narrator` | Metadata embedded in the `.m4b` | Required for `assemble` unless overridden on CLI |
-| `[book].skip_sections` | Chapter titles (case-insensitive) dropped at parse | Default: copyright/dedication/index/bibliography |
-| `[adapt].mode` | `"api"` (unattended) or `"agent"` (Claude Code subagents) | `"api"` is the default; needs LM Studio running |
-| `[adapt].concurrency` | Parallel subagents in `agent` mode | Default 8; ignored in api mode (sequential) |
-| `[adapt.api].base_url` | OpenAI-compatible endpoint | Default LM Studio's `http://localhost:1234/v1` |
-| `[adapt.api].model` | Model id as loaded in LM Studio | See "Picking a model" below |
-| `[adapt.api].api_key` | Sent to satisfy the SDK; LM Studio ignores it | Leave as `"lm-studio"` |
-| `[adapt.api].context_window` | Used to decide whether to include `book_full_text.md` | Default 131072; set to the context your LM Studio model is actually loaded with |
-| `[adapt.api].temperature` | LLM creativity | Default 0.3 (strict JSON adherence) |
-| `[adapt.api].max_output_tokens` | Caps a single response (incl. reasoning tokens) | Default 24576. Must exceed a chapter's adapted length or the JSON truncates — see "Large chapters" |
-| `[adapt.api].request_timeout_s` | Per-chapter timeout | Default 600s; raise for very large chapters on slow GPUs |
-| `[adapt.api].ttl_seconds` | Idle seconds before LM Studio auto-unloads the JIT-loaded model (sent as `ttl` per request) | Default 300; 0 = stay loaded |
-| `[adapt.api].manage_model` | `run` loads the model before adapt and unloads it after, to free RAM for render | Default true; host-only, needs `lms` |
-| `[adapt.api].load_context_length` | Context length to load the model with (`lms load -c`) | Default unset (LM Studio default); lower = much less KV-cache RAM |
-| `[chunk].max_chars` | TTS chunk size in characters | 400 is stable; smaller = more chunks but more reliable |
-| `[chunk].paragraph_silence_ms` / `.section_silence_ms` | Pause durations between paragraphs / `---` section breaks | |
-| `[render].device` | `"mps"`/`"cuda"`/`"cpu"` | Apple Silicon = `mps`; NVIDIA = `cuda` |
-| `[render].workers` | Parallel TTS workers | 1-2 typical for a single GPU |
-| `[render].exaggeration`, `.cfg_weight`, `.temperature` | Chatterbox voice knobs | Defaults are tuned for spoken word |
-| `[assemble].audio_bitrate_kbps` | AAC bitrate in the output `.m4b` | 64 kbps is fine for speech |
-| `[parse].parser`, `.footnote_policy`, `.chapter_level` | PDF ingestion options | EPUB ignores these |
+| `[book].title`, `.author`, `.narrator` | `.m4b` metadata | title/author required for `assemble` unless overridden on CLI |
+| `[book].skip_sections` | Chapter titles dropped at parse | Default: copyright/dedication/index/bibliography |
+| `[adapt].mode` | `"api"` or `"agent"` | `"api"` default; needs LM Studio running |
+| `[adapt].concurrency` | Parallel subagents in agent mode | Default 8; ignored in api mode (sequential) |
+| `[adapt.api].base_url` | OpenAI-compatible endpoint | Default `http://localhost:1234/v1` |
+| `[adapt.api].model` | Model id loaded in LM Studio | See [Picking a model](#picking-a-model) |
+| `[adapt.api].context_window` | Decides whether `book_full_text.md` is included | Default 131072; match what LM Studio actually loaded |
+| `[adapt.api].max_output_tokens` | Caps one response (incl. reasoning) | Default 24576; must exceed a chapter's adapted length — see [Large chapters](#large-chapters) |
+| `[adapt.api].temperature`, `.request_timeout_s` | LLM creativity / per-chapter timeout | Defaults 0.3, 600s |
+| `[adapt.api].ttl_seconds` | Idle seconds before LM Studio auto-unloads (`ttl` per request) | Default 300; 0 = stay loaded |
+| `[adapt.api].manage_model` | `run` loads before adapt, unloads before render | Default true; host-only, needs `lms` |
+| `[adapt.api].load_context_length` | Load context (`lms load -c`) | Unset = LM Studio default; lower = much less KV-cache RAM |
+| `[chunk].max_chars` | TTS chunk size | 400 is stable |
+| `[chunk].paragraph_silence_ms` / `.section_silence_ms` | Pauses between paragraphs / `---` breaks | |
+| `[render].device`, `.workers` | `mps`/`cuda`/`cpu`; parallel TTS workers | Apple Silicon = `mps`; 1-2 workers per GPU |
+| `[render].exaggeration`, `.cfg_weight`, `.temperature` | Chatterbox voice knobs | Tuned for spoken word |
+| `[assemble].audio_bitrate_kbps` | AAC bitrate | 64 kbps fine for speech |
+| `[parse].parser`, `.footnote_policy`, `.chapter_level` | PDF ingestion | EPUB ignores these |
 
-Env-var overrides for `[adapt.api]` (useful for not committing secrets):
+**Env-var overrides** for `[adapt.api]` (only when set and non-empty): `OPENAI_BASE_URL` → `base_url`, `OPENAI_MODEL` → `model`, `OPENAI_API_KEY` → `api_key`.
 
-- `OPENAI_BASE_URL` → `[adapt.api].base_url`
-- `OPENAI_MODEL` → `[adapt.api].model`
-- `OPENAI_API_KEY` → `[adapt.api].api_key`
+## Controlling RAM
 
-Env vars only override when set and non-empty.
+On one Apple Silicon machine, an LLM and Chatterbox cannot share RAM during render — this is the make-or-break operational detail. Adapt and render are separate stages, so the LLM should not be resident during render.
 
-### Large chapters
+With `[adapt.api].manage_model = true` (default), `run` **loads the model before adapt and unloads it before render** via the `lms` CLI (host-only; no-op if `lms` is absent). Each adapt request also carries a `ttl` (`ttl_seconds`, default 300) so the model self-unloads when idle between stage-by-stage runs. In smoke tests, freeing the LLM before render reliably recovers the RAM the model held.
 
-API-mode adapt sends each chapter to the model in a single call, so a whole chapter must
-fit alongside its (similarly sized) adapted output. A ~9,500-word chapter is ~13k tokens
-in and ~13k out, so it needs a model loaded with a large context **and** a matching
-`max_output_tokens` — otherwise the response truncates mid-JSON (`json_parse_error`) or
-comes back empty (`length_anomaly`). The defaults (`context_window = 131072`,
-`max_output_tokens = 24576`) assume a large-context local model; load your model in LM
-Studio with a generous context length to match. Chapters that still don't fit need to be
-split before adaptation (not yet automated).
-
-### Controlling RAM (model load / unload)
-
-Adapt (the LLM) and render (Chatterbox TTS) run in different stages, so the LLM shouldn't
-occupy RAM during render. `bin/audiobook run` handles this automatically when
-`[adapt.api].manage_model = true` (default): it loads the model before adapt and unloads it
-afterward via the `lms` CLI. Each adapt request also carries a `ttl` so the model
-self-unloads after `ttl_seconds` of idle, which covers stage-by-stage runs.
-
-Manual control (host-only; no-op if `lms` isn't installed):
+Manual control:
 
 ```sh
-bin/audiobook lms-load --context-length 32768   # load the configured model, small KV cache
-bin/audiobook lms-unload                         # free it
+bin/audiobook lms-load --context-length 32768   # load configured model, small KV cache
+bin/audiobook lms-unload                         # free all loaded models
 ```
 
-Loading with a smaller `--context-length` (or `[adapt.api].load_context_length`) is the
-single biggest RAM lever — the KV-cache reservation scales with context.
+**`load_context_length` / `lms load -c` is the single biggest RAM lever** — the KV-cache reservation scales with context, so loading at a smaller context dramatically cuts memory.
 
-### Picking a model (for `[adapt.api].model`)
+## Large chapters
 
-We benchmarked several local models on a stress chapter mixing proper names, foreign places, technical terms, code blocks, equations, tables, and lists. Findings:
+api-mode adapt sends each chapter in **one call**, so a chapter must fit alongside its similarly-sized adapted output. A ~9,500-word chapter is ~13k tokens in and ~13k out. It needs a model loaded with a large context **and** a matching `max_output_tokens`, or the response truncates mid-JSON (`json_parse_error`) or comes back empty (`length_anomaly`). Defaults assume a large-context model (`context_window = 131072`, `max_output_tokens = 24576`); load LM Studio with a generous context to match. Oversized chapters must be split manually (not yet automated).
 
-| Model | Recall | Format quality | Speed (per chapter) | Verdict |
+## Picking a model
+
+Benchmarked on a stress chapter mixing proper names, foreign places, technical terms, code, equations, tables, and lists:
+
+| Model | Recall | Format quality | Speed/chapter | Verdict |
 |---|---|---|---|---|
 | **qwen3.6-35b-a3b-mtp** (3-bit) | excellent (15/16 hard terms) | best — clean equations, no hallucinations | ~25s | **Recommended** |
-| qwen3.6-35b-a3b-ud-mlx (4-bit) | excellent | slightly cleaner format, very occasional `...→...` placeholder regression | ~25s | Strong alternative |
-| gemma-4-26b-a4b-it | strong on tech | uses dashes more (handled by sanitizer) | ~7s/short, ~25s/stress | Solid runner-up |
-| qwen3.5-9b-mlx | good with `forcing` rule | format-heavy reliance on the sanitizer | ~5-15s | Workable but not ideal |
-| qwen/qwen3.6-27b | comparable recall | comparable format | ~50s | Too slow (dense 27B) |
-| openai/gpt-oss-20b | **broken** | emits literal `"..."` placeholders | ~2s | Do not use |
+| qwen3.6-35b-a3b-ud-mlx (4-bit) | excellent | slightly cleaner; rare `...→...` placeholder regression | ~25s | Strong alternative |
+| gemma-4-26b-a4b-it | strong on tech | leans on dashes (handled by sanitizer) | ~7-25s | Solid runner-up |
+| qwen3.5-9b-mlx | good with `forcing` rule | heavy reliance on the sanitizer | ~5-15s | Workable |
+| qwen/qwen3.6-27b | comparable | comparable | ~50s | Too slow (dense 27B) |
+| openai/gpt-oss-20b | **broken** | emits literal `"..."` placeholders | ~2s | **Do not use** |
 
-The pipeline applies a `sanitize_spoken_as` post-processor that normalizes dashes and stress marks (e.g. `MEER-ah` → `meer ah`, `BYAR-neh stroo-stroop` → `byar neh stroo stroop`) before substitution, so even models that lean on those patterns produce TTS-clean output. Pure ALL-CAPS acronyms (`MIT`) are preserved.
+A `sanitize_spoken_as` post-processor normalizes dashes and stress marks (e.g. `MEER-ah` → `meer ah`) before substitution, so even format-leaning models stay TTS-clean. Pure ALL-CAPS acronyms (`MIT`) are preserved.
 
-### Agent mode (interactive, Claude Code subagents)
+## Agent mode
 
-If you'd rather have Claude Code drive Stage 2 via subagents (no local LLM needed):
+To have Claude Code drive Stage 2 via subagents (no local LLM, uses your Pro/Max subscription):
 
 ```toml
 [adapt]
 mode = "agent"
 ```
 
-Then open Claude Code from the project root and say:
+Open Claude Code from the project root and say `> process the book`. It reads `CLAUDE.md` and runs the pipeline interactively, dispatching one subagent per chapter (parallelism per `[adapt].concurrency`). Note: `bin/audiobook run` aborts in preflight when `mode = "agent"` — use the interactive workflow instead.
 
-```
-> process the book
-```
-
-Claude Code reads `CLAUDE.md` and runs the pipeline interactively, dispatching one subagent per chapter (parallelism per `[adapt].concurrency`). Uses your Pro/Max subscription, no API key needed.
-
----
-
-## Direct command reference
+## Command reference
 
 ```sh
-bin/audiobook run [INPUT_EPUB]                        # All stages, auto-install, strict failure
-bin/audiobook parse INPUT.epub --out ./work           # Docker — Stage 1
-bin/audiobook adapt ./work                            # Host  — Stage 2 (api mode)
-bin/audiobook validate-adapted ./work                 # Docker — Stage 2 gate
-bin/audiobook merge-pronunciation ./work              # Docker
-bin/audiobook chunk ./work                            # Docker — Stage 3
-bin/audiobook voice save SAMPLE --name NAME           # Host — add a voice to the library
-bin/audiobook voice list                              # Host — list saved voices
-bin/audiobook voice rm NAME                           # Host — remove a saved voice
-bin/audiobook voice validate ./voice/reference.wav    # Docker — check format/SNR
-bin/audiobook voice preview --voice NAME              # Host (MPS) — preview a saved voice
-bin/audiobook render ./work --voice NAME              # Host (MPS) — Stage 4
-bin/audiobook validate-render ./work                  # Docker — per-chunk WAV check
-bin/audiobook assemble ./work --out ./out/book.m4b    # Docker — Stage 5
-bin/audiobook status ./work                           # Read work/state.json
-bin/audiobook lms-load                                # Host — load configured LLM (frees you from preloading)
-bin/audiobook lms-unload                              # Host — unload all LLMs to free RAM
+bin/audiobook run [INPUT]                            # All 8 stages, auto-install, strict failure
+bin/audiobook parse INPUT --out ./work               # Docker — Stage 1 (.epub or .pdf)
+bin/audiobook adapt ./work                           # Host  — Stage 2 (api mode)
+bin/audiobook validate-adapted ./work                # Docker — Stage 2 gate
+bin/audiobook merge-pronunciation ./work             # Docker
+bin/audiobook chunk ./work                           # Docker — Stage 3
+bin/audiobook render ./work --voice NAME             # Host (MPS) — Stage 4
+bin/audiobook validate-render ./work                 # Docker — Stage 4 gate
+bin/audiobook assemble ./work --out ./out/book.m4b   # Docker — Stage 5
+bin/audiobook status ./work                          # Read work/state.json
+bin/audiobook voice save|list|rm|preview|validate    # Voice library (see Voices)
+bin/audiobook lms-load [--context-length N]          # Host — load configured LLM
+bin/audiobook lms-unload                             # Host — unload all LLMs to free RAM
 ```
 
-Add `-v` / `--verbose` to `parse`, `adapt`, `chunk`, `render`, or `assemble` for per-step progress with completion percentages.
+Add `-v` / `--verbose` to `parse`, `adapt`, `chunk`, `render`, or `assemble` for per-step progress.
 
 ## Development
 
 ```sh
-bin/audiobook-test            # Run pytest in Docker
-bin/audiobook-test -k parse   # Run a subset
-.venv/bin/python -m pytest    # Run host-side (for tests that need openai SDK)
-docker compose build          # Rebuild image (only needed when pyproject.toml changes)
+bin/audiobook-test            # pytest in Docker
+bin/audiobook-test -k parse   # subset
+.venv/bin/python -m pytest    # host-side (tests needing the openai SDK)
+docker compose build          # rebuild image (only when pyproject.toml changes)
 ```
 
-Source edits are picked up automatically via the bind mount — no rebuild for `.py` changes.
+Source edits are picked up via the bind mount — no rebuild for `.py` changes.
 
 ## Project layout
 
@@ -372,9 +248,9 @@ Source edits are picked up automatically via the bind mount — no rebuild for `
 audiobook/                Python package (CLI + each stage)
 prompts/                  Adaptation system prompt (rule 8 = pronunciation guidance)
 tests/                    pytest suite + tiny.epub fixture
-scripts/                  Host install + helpers (make_test_epub.py for smoke testing)
+scripts/                  Host install + helpers (make_test_epub.py)
 bin/                      dev launcher + audiobook/audiobook-test wrappers
 docs/superpowers/         Design docs + implementation plans
-input/ voice/ work/ out/  Pipeline I/O (gitignored)
+input/ voice/ voices/ work/ out/   Pipeline I/O + voice library (gitignored)
 scratch/                  Throwaway probes (gitignored)
 ```
