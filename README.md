@@ -122,11 +122,17 @@ voice/reference.wav      # 10-15s mono WAV of the narrator voice (any audio form
 
     bin/audiobook parse ./input/book.pdf --parser auto --footnote-policy skip --chapter-level 1
 
+Chapters come from the PDF's **embedded outline (bookmarks)** when one is present — the
+reliable path for code-heavy books, where `#` code comments would otherwise be misread as
+Markdown headings and shred the book into hundreds of bogus sections. Without an outline,
+it falls back to splitting on Markdown headings.
+
 - `--parser auto|pymupdf|marker` — `auto` (default) extracts with pymupdf4llm and warns
   if the result looks low-quality. `marker` (better multi-column/equation handling) is
   deferred to a future release and currently errors.
 - `--footnote-policy inline|endnote|skip` — default `skip`.
-- `--chapter-level N` — heading level (1–6) used as chapter boundaries (default: H1, else H2).
+- `--chapter-level N` — force a Markdown heading level (1–6) as chapter boundaries,
+  bypassing the outline. Without it: outline if present, else H1, else H2.
 
 **Not supported:** scanned/image-only PDFs (no OCR — fails with a clear message) and
 encrypted PDFs (decrypt first, e.g. with `qpdf`).
@@ -176,6 +182,18 @@ bin/audiobook assemble ./work --out ./out/book.m4b
 ```
 
 `title`/`author` for `assemble` come from `config.toml`'s `[book]` block; pass `--title`/`--author` to override per-run.
+
+**Progress output:** add `--verbose` / `-v` to `parse`, `adapt`, `chunk`, `render`, or
+`assemble` to print per-step progress with completion percentages. Default output is
+unchanged — verbose only adds lines:
+
+```
+[parse]    6/29 (21%) Chapter 1: Introduction to Artificial Intelligence
+[adapt]    2/2 (100%) 01_chapter-2 ok in=20964 out=12038 tok
+[chunk]    1/2 (50%) Chapter 1 -> 136 chunks
+[render]   152/387 (39%) 0152
+[assemble] 2/2 (100%) 01_chapter-2-...
+```
 
 ### 6. Iterating on quality
 
@@ -227,9 +245,9 @@ All knobs live in `config.toml`. The most useful ones:
 | `[adapt.api].base_url` | OpenAI-compatible endpoint | Default LM Studio's `http://localhost:1234/v1` |
 | `[adapt.api].model` | Model id as loaded in LM Studio | See "Picking a model" below |
 | `[adapt.api].api_key` | Sent to satisfy the SDK; LM Studio ignores it | Leave as `"lm-studio"` |
-| `[adapt.api].context_window` | Used to decide whether to include `book_full_text.md` | Set to your model's actual window |
+| `[adapt.api].context_window` | Used to decide whether to include `book_full_text.md` | Default 131072; set to the context your LM Studio model is actually loaded with |
 | `[adapt.api].temperature` | LLM creativity | Default 0.3 (strict JSON adherence) |
-| `[adapt.api].max_output_tokens` | Caps a single response | Default 8192 |
+| `[adapt.api].max_output_tokens` | Caps a single response (incl. reasoning tokens) | Default 24576. Must exceed a chapter's adapted length or the JSON truncates — see "Large chapters" |
 | `[adapt.api].request_timeout_s` | Per-chapter timeout | Default 600s; raise for very large chapters on slow GPUs |
 | `[chunk].max_chars` | TTS chunk size in characters | 400 is stable; smaller = more chunks but more reliable |
 | `[chunk].paragraph_silence_ms` / `.section_silence_ms` | Pause durations between paragraphs / `---` section breaks | |
@@ -246,6 +264,17 @@ Env-var overrides for `[adapt.api]` (useful for not committing secrets):
 - `OPENAI_API_KEY` → `[adapt.api].api_key`
 
 Env vars only override when set and non-empty.
+
+### Large chapters
+
+API-mode adapt sends each chapter to the model in a single call, so a whole chapter must
+fit alongside its (similarly sized) adapted output. A ~9,500-word chapter is ~13k tokens
+in and ~13k out, so it needs a model loaded with a large context **and** a matching
+`max_output_tokens` — otherwise the response truncates mid-JSON (`json_parse_error`) or
+comes back empty (`length_anomaly`). The defaults (`context_window = 131072`,
+`max_output_tokens = 24576`) assume a large-context local model; load your model in LM
+Studio with a generous context length to match. Chapters that still don't fit need to be
+split before adaptation (not yet automated).
 
 ### Picking a model (for `[adapt.api].model`)
 
@@ -300,6 +329,8 @@ bin/audiobook validate-render ./work                  # Docker — per-chunk WAV
 bin/audiobook assemble ./work --out ./out/book.m4b    # Docker — Stage 5
 bin/audiobook status ./work                           # Read work/state.json
 ```
+
+Add `-v` / `--verbose` to `parse`, `adapt`, `chunk`, `render`, or `assemble` for per-step progress with completion percentages.
 
 ## Development
 
