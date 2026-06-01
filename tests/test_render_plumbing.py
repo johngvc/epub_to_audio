@@ -9,6 +9,45 @@ import soundfile as sf
 
 from audiobook.models import ChapterChunks, Chunk
 from audiobook.render import render_chapter_chunks
+from audiobook.utils.audio import compress_silence
+
+
+def _tone(n: int, sr: int = 24000) -> np.ndarray:
+    return (0.2 * np.sin(2 * np.pi * 220 * np.arange(n) / sr)).astype(np.float32)
+
+
+def _trailing_ms(y: np.ndarray, sr: int = 24000, thr: float = 0.01) -> float:
+    idx = np.where(np.abs(y) > thr)[0]
+    return (len(y) - 1 - idx[-1]) / sr * 1000 if len(idx) else len(y) / sr * 1000
+
+
+def _max_internal_gap_ms(y: np.ndarray, sr: int = 24000, thr: float = 0.01) -> float:
+    idx = np.where(np.abs(y) > thr)[0]
+    return (np.diff(idx).max() / sr * 1000) if len(idx) > 1 else 0.0
+
+
+def test_compress_silence_trims_trailing_and_internal() -> None:
+    sr = 24000
+    sig = np.concatenate([
+        _tone(sr // 5), np.zeros(sr * 5, dtype=np.float32),   # 5s internal gap
+        _tone(sr // 5), np.zeros(sr * 5, dtype=np.float32),   # 5s trailing
+    ])
+    out = compress_silence(sig, sr, max_gap_ms=600, edge_ms=50)
+    assert len(out) < len(sig)
+    assert _trailing_ms(out, sr) < 200          # 5s trailing trimmed
+    assert _max_internal_gap_ms(out, sr) < 900  # 5s internal capped to ~600ms
+
+
+def test_compress_silence_noop_when_disabled() -> None:
+    sig = np.concatenate([_tone(2400), np.zeros(72000, dtype=np.float32)])
+    out = compress_silence(sig, 24000, max_gap_ms=0)
+    assert np.array_equal(out, sig)
+
+
+def test_compress_silence_leaves_clean_audio_unchanged() -> None:
+    sig = _tone(24000)  # 1s continuous tone, no long silences
+    out = compress_silence(sig, 24000)
+    assert len(out) == len(sig)
 
 
 def _fake_tts(text: str, *, voice_conditioning: Any, **_: Any) -> tuple[np.ndarray, int]:
@@ -89,11 +128,13 @@ def test_cli_render_resolves_voice_name(tmp_path, monkeypatch):
     called = {}
     import audiobook.cli as cli_mod
 
-    def fake_render(work_dir, *, device, workers, voice_path, tts_kwargs=None, verbose=False):
+    def fake_render(work_dir, *, device, workers, voice_path, tts_kwargs=None, verbose=False,
+                    max_silence_ms=600):
         called["voice_path"] = voice_path
         called["work_dir"] = work_dir
         called["tts_kwargs"] = tts_kwargs
         called["verbose"] = verbose
+        called["max_silence_ms"] = max_silence_ms
 
     monkeypatch.setattr(cli_mod, "render_work_dir", fake_render)
     monkeypatch.chdir(tmp_path)

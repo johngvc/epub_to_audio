@@ -44,19 +44,39 @@ def sanitize_spoken_as(value: str) -> str:
     return value
 
 
+def _is_redundant_spelling(term: str, cleaned: str) -> bool:
+    """True when ``cleaned`` just spells ``term`` out as space-separated single
+    letters (e.g. term "AI", cleaned "A I").
+
+    Such hints add nothing a TTS engine doesn't already do for an ALL-CAPS
+    acronym, but the spaced single letters make Chatterbox read them with a
+    pause (or even hallucinate a multi-second gap), so we skip them and leave
+    the acronym intact — the same way pure ALL-CAPS like "MIT" is preserved.
+    """
+    tokens = cleaned.split()
+    if len(tokens) < 2 or not all(len(t) == 1 and t.isalpha() for t in tokens):
+        return False
+    term_letters = re.sub(r"[^A-Za-z]", "", term).lower()
+    return "".join(tokens).lower() == term_letters
+
+
 def apply_pronunciation(text: str, hints: list[PronunciationHint]) -> str:
     """Whole-word find-replace. Case-sensitive for terms that are all-uppercase
     (acronyms) or mixed-case (CLI tool names); case-insensitive otherwise.
 
     `spoken_as` is sanitized via :func:`sanitize_spoken_as` before substitution
     so TTS-hostile artifacts (dashes, stress marks) never reach Chatterbox.
+    Hints that merely re-spell an acronym as spaced letters are skipped (see
+    :func:`_is_redundant_spelling`).
     """
     result = text
     for h in hints:
+        cleaned = sanitize_spoken_as(h.spoken_as)
+        if _is_redundant_spelling(h.term, cleaned):
+            continue
         case_sensitive = h.term != h.term.lower()
         pattern = r"\b" + re.escape(h.term) + r"\b"
         flags = 0 if case_sensitive else re.IGNORECASE
-        cleaned = sanitize_spoken_as(h.spoken_as)
         result = re.sub(pattern, cleaned, result, flags=flags)
     return result
 

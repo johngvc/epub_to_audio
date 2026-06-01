@@ -73,6 +73,9 @@ class RenderConfig(_Strict):
     cfg_weight: float = 0.5
     temperature: float = 0.7
     multilingual: bool = False
+    # Collapse Chatterbox silence hallucinations: trim chunk edges and cap any
+    # internal silent run to this many ms. 0 disables.
+    max_silence_ms: int = Field(default=600, ge=0)
 
 
 class AssembleConfig(_Strict):

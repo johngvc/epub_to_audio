@@ -380,6 +380,7 @@ def render_cmd(
             "temperature": cfg.render.temperature,
         },
         verbose=verbose,
+        max_silence_ms=cfg.render.max_silence_ms,
     )
     typer.echo("render complete")
 

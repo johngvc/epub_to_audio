@@ -11,7 +11,7 @@ import numpy as np
 import soundfile as sf  # type: ignore[import-untyped]
 
 from audiobook.models import ChapterChunks
-from audiobook.utils.audio import write_wav_with_trailing_silence
+from audiobook.utils.audio import compress_silence, write_wav_with_trailing_silence
 from audiobook.utils.progress import pct_line
 
 TTSCallable = Callable[..., tuple[np.ndarray, int]]
@@ -109,6 +109,7 @@ def render_chapter_chunks(
     progress: Callable[[str], None] | None = None,
     on_chunk: Callable[[str], None] | None = None,
     tts_kwargs: dict[str, Any] | None = None,
+    max_silence_ms: int = 600,
 ) -> None:
     """Render every chunk in ``cc`` to ``out_dir/{chunk_id}.wav``.
 
@@ -136,6 +137,7 @@ def render_chapter_chunks(
         samples, sr = tts_callable(
             chunk.text, voice_conditioning=voice_conditioning, **(tts_kwargs or {})
         )
+        samples = compress_silence(samples, sr, max_gap_ms=max_silence_ms)
         write_wav_with_trailing_silence(wav_path, samples, sr, chunk.trailing_silence_ms)
         side = {
             "chunk_id": chunk.id,
@@ -187,6 +189,7 @@ def render_work_dir(
     voice_path: Path,
     tts_kwargs: dict[str, Any] | None = None,
     verbose: bool = False,
+    max_silence_ms: int = 600,
 ) -> None:
     """Top-level entry. Loads Chatterbox once and renders every chapter.
 
@@ -238,6 +241,7 @@ def render_work_dir(
             progress=_progress,
             on_chunk=_on_chunk if verbose else None,
             tts_kwargs=tts_kwargs,
+            max_silence_ms=max_silence_ms,
         )
 
     with ThreadPoolExecutor(max_workers=workers) as ex:

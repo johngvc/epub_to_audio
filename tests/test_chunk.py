@@ -36,6 +36,24 @@ def test_sanitize_handles_underscores() -> None:
     assert sanitize_spoken_as("L_net plus L_db") == "l net plus l db"
 
 
+def test_apply_pronunciation_skips_spaced_acronym_spelling() -> None:
+    # {"AI": "A I"} only re-spells the acronym; it must be skipped so the TTS
+    # doesn't read "A I" with a pause. "AI" is left intact.
+    hints = [PronunciationHint(term="AI", spoken_as="A I", reason="acronym")]
+    assert apply_pronunciation("What is AI? AI is here.", hints) == "What is AI? AI is here."
+
+
+def test_apply_pronunciation_skips_spaced_spelling_for_gps() -> None:
+    hints = [PronunciationHint(term="GPS", spoken_as="G P S", reason="acronym")]
+    assert apply_pronunciation("the GPS solver", hints) == "the GPS solver"
+
+
+def test_apply_pronunciation_keeps_phonetic_acronym() -> None:
+    # "i p el" is a phonetic respelling (contains "el"), not bare letters — keep it.
+    hints = [PronunciationHint(term="IPL", spoken_as="i p el", reason="acronym")]
+    assert apply_pronunciation("the IPL language", hints) == "the i p el language"
+
+
 def test_apply_pronunciation_sanitizes_dashed_spoken_as() -> None:
     """Hints with dashed stress marks (the common LLM failure mode) must be
     substituted in cleaned form, not literally."""
