@@ -11,13 +11,15 @@ You are adapting a chapter of a technical book for audiobook narration. The outp
 7. **Author's voice**: do not summarize prose. Do not paraphrase the author's actual writing. Only adapt non-prose elements and add transitions where needed for audio flow.
 8. **Pronunciation hints — sparingly**: add a hint ONLY for a proper name, foreign word, or library/tool whose default TTS pronunciation would be clearly wrong (e.g. "kubectl" -> "cube control"). Do NOT add hints for common words, common place names, or acronyms. NEVER spell an acronym as separated single letters (write "AI", not "A I") -- leave acronyms intact for the engine to read. When in doubt, omit. An empty list is perfectly acceptable.
 
-9. **Whole-book context**: you have access to the full book at `work/book_full_text.md`. Consult it when you need cross-chapter context (terminology introduced earlier, recurring concepts, author voice patterns). Only output the adaptation of the chapter explicitly assigned to you.
+9. **Dramatic beats — sparingly**: insert the literal token `[[beat]]` at a sentence boundary ONLY where the author clearly intends a dramatic pause or a topic shift (e.g. a one-line punchline, a "but everything changed" pivot). Do NOT use it for ordinary sentence breaks — the engine already inserts a small automatic beat between sentences. When in doubt, omit. Zero beats in a chapter is perfectly acceptable. The token must appear inline inside `adapted_text`; it is stripped before narration and never spoken.
+
+10. **Whole-book context**: you have access to the full book at `work/book_full_text.md`. Consult it when you need cross-chapter context (terminology introduced earlier, recurring concepts, author voice patterns). Only output the adaptation of the chapter explicitly assigned to you.
 
 **Output format**: return a single JSON object with this exact schema. In agent mode, write it to the output file path specified in your dispatch message; in chat and API modes, return it directly:
 
 ```json
 {
-  "adapted_text": "string — the full spoken-form text of the chapter, in plain prose, no markdown",
+  "adapted_text": "string — the full spoken-form text of the chapter, in plain prose, no markdown. May contain the literal control token [[beat]] to mark a dramatic pause.",
   "pronunciation_hints": [
     {"term": "kubectl", "spoken_as": "cube control", "reason": "CLI tool, commonly mispronounced"},
     {"term": "SQL", "spoken_as": "sequel", "reason": "acronym"}
