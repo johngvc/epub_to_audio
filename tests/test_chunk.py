@@ -153,3 +153,66 @@ def test_chunk_chapter_writes_expected_structure() -> None:
     assert len(cc.chunks) >= 3
     para_breaks = [c for c in cc.chunks if c.trailing_silence_ms == 400]
     assert len(para_breaks) >= 2  # at least two paragraph boundaries
+
+
+def _adapt(text: str) -> ChapterAdapted:
+    return ChapterAdapted(adapted_text=text, pronunciation_hints=[], notes="")
+
+
+def _chunk(text: str, **kw):
+    defaults = dict(
+        index=0, title="t", pronunciation=[], max_chars=400,
+        sentence_silence_ms=180, paragraph_silence_ms=400,
+        section_silence_ms=1200, beat_silence_ms=600,
+    )
+    defaults.update(kw)
+    return chunk_chapter(adapted=_adapt(text), **defaults)
+
+
+def test_inter_sentence_silence_within_paragraph() -> None:
+    cc = _chunk(
+        "First sentence here. Second sentence here. Third sentence here.\n\n"
+        "Next paragraph sentence."
+    )
+    # Para 1's three sentences: first two are mid-paragraph (180), third is
+    # the paragraph break (400).
+    assert [c.trailing_silence_ms for c in cc.chunks[:3]] == [180, 180, 400]
+
+
+def test_beat_sentinel_maps_to_beat_silence_and_is_stripped() -> None:
+    cc = _chunk("And that changes everything. [[beat]] The rest follows naturally here.")
+    assert all("[[beat]]" not in c.text for c in cc.chunks)
+    assert cc.chunks[0].text == "And that changes everything."
+    # Mid-paragraph base would be 180; the beat overrides to 600.
+    assert cc.chunks[0].trailing_silence_ms == 600
+
+
+def test_beat_at_paragraph_end_takes_max() -> None:
+    cc = _chunk(
+        "Opening sentence here.\n\nFinal punch line here. [[beat]]\n\nClosing paragraph sentence."
+    )
+    punch = next(c for c in cc.chunks if c.text == "Final punch line here.")
+    assert punch.trailing_silence_ms == 600  # max(paragraph 400, beat 600)
+
+
+def test_stray_leading_sentinel_dropped() -> None:
+    cc = _chunk("[[beat]] Hello there world.")
+    assert all("[[beat]]" not in c.text for c in cc.chunks)
+    assert len(cc.chunks) == 1
+    assert cc.chunks[0].text == "Hello there world."
+    assert cc.chunks[0].trailing_silence_ms == 0
+
+
+def test_orphan_sentence_merges_forward_no_lone_fragment() -> None:
+    cc = _chunk("This is a normal sentence. X.\n\nNext paragraph here now.")
+    assert not any(c.text == "X." for c in cc.chunks)
+
+
+def test_long_sentence_internal_pieces_have_zero_silence() -> None:
+    big = ("alpha beta, " * 50).strip().rstrip(",") + "."
+    cc = _chunk(big + "\n\nShort tail paragraph here.", max_chars=400)
+    long_chunks = cc.chunks[:-1]  # everything except the tail paragraph
+    assert len(long_chunks) >= 2
+    assert all(len(c.text) <= 400 for c in cc.chunks)
+    assert long_chunks[-1].trailing_silence_ms == 400  # final piece → paragraph break
+    assert all(c.trailing_silence_ms == 0 for c in long_chunks[:-1])  # internal splits

@@ -13,6 +13,10 @@ from audiobook.utils.progress import pct_line
 
 _SEGMENTER = pysbd.Segmenter(language="en", clean=False)
 
+# Literal control token the adapter may emit inside `adapted_text` to mark a
+# dramatic pause. Stripped from spoken text; mapped to `beat_silence_ms`.
+BEAT_TOKEN = "[[beat]]"
+
 
 def sanitize_spoken_as(value: str) -> str:
     """Normalize a pronunciation hint's `spoken_as` so the TTS engine doesn't
@@ -170,6 +174,39 @@ def pack_sentences(sentences: list[str], max_chars: int, min_orphan_chars: int) 
     return chunks
 
 
+def _sentence_units(
+    sentences: list[str], max_chars: int, min_orphan_chars: int
+) -> list[list[str]]:
+    """Turn a segment's sentences into per-sentence units.
+
+    Each unit is a list of sub-pieces: a normal sentence yields ``[sentence]``;
+    a sentence longer than ``max_chars`` yields several length-split pieces. Tiny
+    sentences (< ``min_orphan_chars``) merge forward into the next sentence (or
+    backward into the previous one if they are last) so we never emit a lone
+    fragment — the same orphan rule the old packer used, minus cross-sentence
+    packing.
+    """
+    merged: list[str] = []
+    pending: str | None = None
+    for sent in sentences:
+        s = sent.strip()
+        if not s:
+            continue
+        if pending is not None:
+            s = pending + " " + s
+            pending = None
+        if len(s) < min_orphan_chars:
+            pending = s
+            continue
+        merged.append(s)
+    if pending is not None:
+        if merged:
+            merged[-1] = merged[-1] + " " + pending
+        else:
+            merged.append(pending)
+    return [split_long_sentence(s, max_chars) for s in merged]
+
+
 def chunk_chapter(
     *,
     index: int,
@@ -179,6 +216,8 @@ def chunk_chapter(
     max_chars: int,
     paragraph_silence_ms: int,
     section_silence_ms: int,
+    sentence_silence_ms: int = 180,
+    beat_silence_ms: int = 600,
 ) -> ChapterChunks:
     text = apply_pronunciation(adapted.adapted_text, pronunciation + adapted.pronunciation_hints)
     paragraphs = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
@@ -186,24 +225,49 @@ def chunk_chapter(
     all_chunks: list[Chunk] = []
     chunk_id = 0
     for p_i, paragraph in enumerate(paragraphs):
-        section_break = paragraph.strip() == "---"
-        if section_break:
+        if paragraph.strip() == "---":
             if all_chunks:
+                last = all_chunks[-1]
                 all_chunks[-1] = Chunk(
-                    id=all_chunks[-1].id,
-                    text=all_chunks[-1].text,
-                    trailing_silence_ms=section_silence_ms,
+                    id=last.id,
+                    text=last.text,
+                    trailing_silence_ms=max(last.trailing_silence_ms, section_silence_ms),
                 )
             continue
-        sentences = _SEGMENTER.segment(paragraph)
-        packed = pack_sentences(list(sentences), max_chars=max_chars, min_orphan_chars=20)
-        for i, ptext in enumerate(packed):
-            is_last_in_paragraph = i == len(packed) - 1
-            trailing = (
-                paragraph_silence_ms if is_last_in_paragraph and p_i < len(paragraphs) - 1 else 0
-            )
-            all_chunks.append(Chunk(id=f"{chunk_id:04d}", text=ptext, trailing_silence_ms=trailing))
-            chunk_id += 1
+
+        is_last_paragraph = p_i == len(paragraphs) - 1
+
+        # Split on beat sentinels first so pysbd never sees the token. A beat
+        # follows every segment except the last; it attaches to the unit that
+        # precedes it (empty segments collapse, so doubled/edge beats are safe).
+        units: list[list] = []  # each: [pieces: list[str], beat_after: bool]
+        segments = paragraph.split(BEAT_TOKEN)
+        for s_idx, seg in enumerate(segments):
+            seg = seg.strip()
+            beat_here = s_idx < len(segments) - 1
+            if seg:
+                sentences = list(_SEGMENTER.segment(seg))
+                for pieces in _sentence_units(sentences, max_chars, min_orphan_chars=20):
+                    units.append([pieces, False])
+            if beat_here and units:
+                units[-1][1] = True
+
+        for u_idx, (pieces, beat_after) in enumerate(units):
+            is_last_unit = u_idx == len(units) - 1
+            for pc_idx, piece in enumerate(pieces):
+                is_last_piece = pc_idx == len(pieces) - 1
+                if not is_last_piece:
+                    trailing = 0  # forced mid-sentence split — no audible pause
+                elif is_last_unit:
+                    trailing = 0 if is_last_paragraph else paragraph_silence_ms
+                else:
+                    trailing = sentence_silence_ms
+                if is_last_piece and beat_after:
+                    trailing = max(trailing, beat_silence_ms)
+                all_chunks.append(
+                    Chunk(id=f"{chunk_id:04d}", text=piece, trailing_silence_ms=trailing)
+                )
+                chunk_id += 1
 
     return ChapterChunks(index=index, title=title, chunks=all_chunks)
 
