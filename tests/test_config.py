@@ -110,3 +110,10 @@ def test_parse_config_defaults_when_absent(tmp_path) -> None:
     assert cfg.parse.parser == "auto"
     assert cfg.parse.footnote_policy == "skip"
     assert cfg.parse.chapter_level is None
+
+def test_chunk_config_pause_defaults() -> None:
+    from audiobook.config import ChunkConfig
+
+    c = ChunkConfig()
+    assert c.sentence_silence_ms == 180
+    assert c.beat_silence_ms == 600
