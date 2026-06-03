@@ -278,6 +278,8 @@ def chunk_work_dir(
     max_chars: int,
     paragraph_silence_ms: int,
     section_silence_ms: int,
+    sentence_silence_ms: int = 180,
+    beat_silence_ms: int = 600,
     progress: Callable[[str], None] | None = None,
     verbose: bool = False,
 ) -> int:
@@ -318,6 +320,8 @@ def chunk_work_dir(
             max_chars=max_chars,
             paragraph_silence_ms=paragraph_silence_ms,
             section_silence_ms=section_silence_ms,
+            sentence_silence_ms=sentence_silence_ms,
+            beat_silence_ms=beat_silence_ms,
         )
         out_path.write_text(chunks.model_dump_json(indent=2) + "\n")
         count += 1

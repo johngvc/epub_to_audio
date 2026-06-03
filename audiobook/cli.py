@@ -339,6 +339,8 @@ def chunk_cmd(
         max_chars=cfg.chunk.max_chars,
         paragraph_silence_ms=cfg.chunk.paragraph_silence_ms,
         section_silence_ms=cfg.chunk.section_silence_ms,
+        sentence_silence_ms=cfg.chunk.sentence_silence_ms,
+        beat_silence_ms=cfg.chunk.beat_silence_ms,
         progress=(lambda line: typer.echo(line, err=True)) if verbose else None,
         verbose=verbose,
     )
