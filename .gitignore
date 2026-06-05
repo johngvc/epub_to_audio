@@ -17,6 +17,9 @@ input/
 voice/*
 !voice/.gitkeep
 work/
+# alternate / eval work dirs
+work-*/
+logs/
 out/
 scratch/
 tests/_scratch/
