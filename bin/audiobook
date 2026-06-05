@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# audiobook CLI dispatcher: routes render-stage subcommands to the host venv
-# (needs MPS via uv) and everything else to the Docker container.
+# audiobook CLI dispatcher: routes host-only subcommands to the host venv
+# (render needs MPS; assemble needs host ffmpeg + writes to host paths like an
+# external output folder) and everything else to the Docker container.
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -30,6 +31,11 @@ case "$sub1" in
     run_host "$@"
     ;;
   render)
+    run_host "$@"
+    ;;
+  assemble|out-path)
+    # Host: assemble needs ffmpeg and writes the final .m4b to the configured
+    # out_dir, which is typically a host path outside the Docker bind mount.
     run_host "$@"
     ;;
   lms-load|lms-unload)
