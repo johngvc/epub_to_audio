@@ -115,5 +115,6 @@ def test_chunk_config_pause_defaults() -> None:
     from audiobook.config import ChunkConfig
 
     c = ChunkConfig()
-    assert c.sentence_silence_ms == 180
+    assert c.sentence_silence_ms == 300
     assert c.beat_silence_ms == 600
+    assert c.title_silence_ms == 800

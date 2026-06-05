@@ -61,10 +61,11 @@ class AdaptConfig(_Strict):
 
 class ChunkConfig(_Strict):
     max_chars: int = Field(default=400, ge=50, le=600)
-    sentence_silence_ms: int = Field(default=180, ge=0, le=5000)
+    sentence_silence_ms: int = Field(default=300, ge=0, le=5000)
     paragraph_silence_ms: int = Field(default=400, ge=0, le=5000)
     section_silence_ms: int = Field(default=1200, ge=0, le=10_000)
     beat_silence_ms: int = Field(default=600, ge=0, le=10_000)
+    title_silence_ms: int = Field(default=800, ge=0, le=10_000)
 
 
 class RenderConfig(_Strict):

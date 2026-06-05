@@ -54,10 +54,11 @@ manage_model = true           # `run` loads the model before adapt, unloads afte
 [chunk]
 # Affects how the adapted text is sliced into TTS-sized pieces.
 max_chars = 400               # smaller → more stable TTS but more chunks
-sentence_silence_ms = 180     # beat inserted between sentences within a paragraph
+sentence_silence_ms = 300     # pause between sentences within a paragraph
 paragraph_silence_ms = 400
 section_silence_ms = 1200
 beat_silence_ms = 600         # silence for an adapter-emitted [[beat]] sentinel
+title_silence_ms = 800        # pause after a chapter title / section heading
 
 [render]
 # TWEAK — Stage 4 (TTS). Host-only.

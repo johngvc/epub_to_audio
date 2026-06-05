@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable
+from html import unescape
 from pathlib import Path
 
 import pysbd  # type: ignore[import-untyped]
@@ -174,6 +175,24 @@ def pack_sentences(sentences: list[str], max_chars: int, min_orphan_chars: int) 
     return chunks
 
 
+def _extract_headings(html: str) -> set[str]:
+    """Return the plain-text of every ``<h1>``–``<h6>`` in ``html``.
+
+    The adapter flattens headings into ordinary short paragraphs, losing the
+    heading marker. The raw chapter HTML still has the tags, so the chunker
+    recovers heading text here and matches it back to adapted paragraphs to give
+    them a distinct title pause. Inner tags are stripped, entities unescaped,
+    whitespace collapsed — matching how adapted paragraphs are stored.
+    """
+    out: set[str] = set()
+    for inner in re.findall(r"<h[1-6][^>]*>(.*?)</h[1-6]>", html, re.S | re.I):
+        text = re.sub(r"<[^>]+>", "", inner)
+        text = re.sub(r"\s+", " ", unescape(text)).strip()
+        if text:
+            out.add(text)
+    return out
+
+
 def _sentence_units(
     sentences: list[str], max_chars: int, min_orphan_chars: int
 ) -> list[list[str]]:
@@ -216,11 +235,15 @@ def chunk_chapter(
     max_chars: int,
     paragraph_silence_ms: int,
     section_silence_ms: int,
-    sentence_silence_ms: int = 180,
+    sentence_silence_ms: int = 300,
     beat_silence_ms: int = 600,
+    title_silence_ms: int = 800,
+    heading_texts: set[str] | None = None,
+    mark_first_as_title: bool = False,
 ) -> ChapterChunks:
     text = apply_pronunciation(adapted.adapted_text, pronunciation + adapted.pronunciation_hints)
     paragraphs = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
+    headings = heading_texts or set()
 
     all_chunks: list[Chunk] = []
     chunk_id = 0
@@ -236,6 +259,7 @@ def chunk_chapter(
             continue
 
         is_last_paragraph = p_i == len(paragraphs) - 1
+        is_title = (mark_first_as_title and p_i == 0) or paragraph.strip() in headings
 
         # Split on beat sentinels first so pysbd never sees the token. A beat
         # follows every segment except the last; it attaches to the unit that
@@ -264,6 +288,8 @@ def chunk_chapter(
                     trailing = sentence_silence_ms
                 if is_last_piece and beat_after:
                     trailing = max(trailing, beat_silence_ms)
+                if is_last_piece and is_last_unit and is_title:
+                    trailing = max(trailing, title_silence_ms)
                 all_chunks.append(
                     Chunk(id=f"{chunk_id:04d}", text=piece, trailing_silence_ms=trailing)
                 )
@@ -278,8 +304,9 @@ def chunk_work_dir(
     max_chars: int,
     paragraph_silence_ms: int,
     section_silence_ms: int,
-    sentence_silence_ms: int = 180,
+    sentence_silence_ms: int = 300,
     beat_silence_ms: int = 600,
+    title_silence_ms: int = 800,
     progress: Callable[[str], None] | None = None,
     verbose: bool = False,
 ) -> int:
@@ -322,6 +349,9 @@ def chunk_work_dir(
             section_silence_ms=section_silence_ms,
             sentence_silence_ms=sentence_silence_ms,
             beat_silence_ms=beat_silence_ms,
+            title_silence_ms=title_silence_ms,
+            heading_texts=_extract_headings(raw_data.get("html", "")),
+            mark_first_as_title=True,
         )
         out_path.write_text(chunks.model_dump_json(indent=2) + "\n")
         count += 1

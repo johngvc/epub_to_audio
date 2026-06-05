@@ -216,3 +216,41 @@ def test_long_sentence_internal_pieces_have_zero_silence() -> None:
     assert all(len(c.text) <= 400 for c in cc.chunks)
     assert long_chunks[-1].trailing_silence_ms == 400  # final piece → paragraph break
     assert all(c.trailing_silence_ms == 0 for c in long_chunks[:-1])  # internal splits
+
+
+def test_heading_paragraph_gets_title_silence() -> None:
+    cc = _chunk(
+        "Intro paragraph sentence here now.\n\nWhat is AI?\n\nA definition follows here now.",
+        heading_texts={"What is AI?"},
+        title_silence_ms=800,
+    )
+    heading = next(c for c in cc.chunks if c.text == "What is AI?")
+    assert heading.trailing_silence_ms == 800
+
+
+def test_first_paragraph_marked_as_chapter_title() -> None:
+    cc = _chunk(
+        "Chapter One: The Title\n\nBody sentence one here. Body sentence two here.",
+        mark_first_as_title=True,
+        title_silence_ms=800,
+    )
+    assert cc.chunks[0].text == "Chapter One: The Title"
+    assert cc.chunks[0].trailing_silence_ms == 800
+
+
+def test_non_heading_short_paragraph_keeps_paragraph_silence() -> None:
+    # Without a heading match and without mark_first_as_title, a short paragraph
+    # is treated normally (paragraph break = 400), not as a title.
+    cc = _chunk(
+        "Short one here.\n\nSecond paragraph sentence here now.",
+        heading_texts=set(),
+        title_silence_ms=800,
+    )
+    assert cc.chunks[0].trailing_silence_ms == 400
+
+
+def test_extract_headings_from_h2_html() -> None:
+    from audiobook.chunk import _extract_headings
+
+    html = "<h1>Chapter</h1><p>x</p><h2>What is AI?</h2><p>y</p><h2>Summary</h2>"
+    assert _extract_headings(html) == {"Chapter", "What is AI?", "Summary"}
