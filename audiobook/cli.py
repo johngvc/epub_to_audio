@@ -422,7 +422,9 @@ def assemble_cmd(
     narrator: str = typer.Option(
         "", "--narrator", help="Overrides [book].narrator in config.toml"
     ),
-    out: Path = typer.Option(..., "--out"),  # noqa: B008
+    out: Path | None = typer.Option(  # noqa: B008
+        None, "--out", help="Output .m4b path. Default: [assemble].out_dir / <title>.m4b."
+    ),
     cover: Path | None = typer.Option(None, "--cover", exists=True, dir_okay=False),  # noqa: B008
     config: Path = typer.Option(Path("./config.toml"), "--config", exists=True),  # noqa: B008
     verbose: bool = typer.Option(
@@ -430,6 +432,8 @@ def assemble_cmd(
     ),
 ) -> None:
     """Stage 5 — assemble final .m4b with chapter markers and tags."""
+    from audiobook.config import resolve_out_path
+
     cfg = load_config(config)
     title = title or cfg.book.title
     author = author or cfg.book.author
@@ -441,6 +445,8 @@ def assemble_cmd(
             err=True,
         )
         raise typer.Exit(2)
+    out = resolve_out_path(cfg, out, title)
+    out.parent.mkdir(parents=True, exist_ok=True)
     _assemble(
         work_dir,
         title=title,
@@ -453,6 +459,19 @@ def assemble_cmd(
         verbose=verbose,
     )
     typer.echo(f"wrote {out}")
+
+
+@app.command("out-path")
+def out_path_cmd(
+    title: str = typer.Option("", "--title", help="Overrides [book].title for the filename."),
+    out: Path | None = typer.Option(None, "--out"),  # noqa: B008
+    config: Path = typer.Option(Path("./config.toml"), "--config"),  # noqa: B008
+) -> None:
+    """Print the resolved final .m4b path (env > config.local.toml > config.toml)."""
+    from audiobook.config import resolve_out_path
+
+    cfg = load_config(config) if config.exists() else load_config_default()
+    typer.echo(str(resolve_out_path(cfg, out, title or cfg.book.title)))
 
 
 @app.command("status")

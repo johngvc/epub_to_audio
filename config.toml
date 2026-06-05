@@ -73,3 +73,8 @@ multilingual = false
 [assemble]
 audio_bitrate_kbps = 64       # 64 is fine for spoken word; raise for music
 sample_rate_hz = 24000
+# Folder for the final .m4b (filename derived from [book].title). Keep this
+# generic in git; override the path on a specific machine in a gitignored
+# config.local.toml (or the AUDIOBOOK_OUT_DIR env var). Precedence:
+# env > config.local.toml > config.toml.
+out_dir = "./out"

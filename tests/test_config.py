@@ -118,3 +118,61 @@ def test_chunk_config_pause_defaults() -> None:
     assert c.sentence_silence_ms == 300
     assert c.beat_silence_ms == 600
     assert c.title_silence_ms == 800
+
+
+def test_assemble_out_dir_default() -> None:
+    from audiobook.config import AssembleConfig
+
+    assert AssembleConfig().out_dir == "./out"
+
+
+def test_local_overlay_deep_merges_and_wins(tmp_path: Path) -> None:
+    from audiobook.config import load_config
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        '[book]\ntitle = "Committed"\nauthor = "A"\n'
+        '[assemble]\naudio_bitrate_kbps = 64\nout_dir = "./out"\n'
+    )
+    (tmp_path / "config.local.toml").write_text('[assemble]\nout_dir = "/local/path"\n')
+    cfg = load_config(cfg_path)
+    assert cfg.assemble.out_dir == "/local/path"   # local wins
+    assert cfg.assemble.audio_bitrate_kbps == 64    # sibling untouched
+    assert cfg.book.title == "Committed"            # other sections untouched
+
+
+def test_safe_filename_strips_illegal_chars() -> None:
+    from audiobook.config import safe_filename
+
+    assert safe_filename("Learning Domain-Driven Design") == "Learning Domain-Driven Design"
+    assert safe_filename('A/B: C? "x"') == "AB C x"
+    assert safe_filename("   ") == "book"
+    assert safe_filename("...") == "book"
+
+
+def test_resolve_out_path_explicit_wins(tmp_path: Path) -> None:
+    from audiobook.config import AppConfig, resolve_out_path
+
+    cfg = AppConfig()
+    explicit = tmp_path / "custom.m4b"
+    assert resolve_out_path(cfg, explicit, "Some Title") == explicit
+
+
+def test_resolve_out_path_from_dir_and_title() -> None:
+    from audiobook.config import AppConfig, resolve_out_path
+
+    cfg = AppConfig()
+    cfg.assemble.out_dir = "/books"
+    out = resolve_out_path(cfg, None, "Learning DDD: A Book")
+    assert out == Path("/books/Learning DDD A Book.m4b")
+
+
+def test_resolve_out_path_env_overrides_dir(monkeypatch) -> None:
+    from audiobook.config import AppConfig, resolve_out_path
+
+    cfg = AppConfig()
+    cfg.assemble.out_dir = "/books"
+    monkeypatch.setenv("AUDIOBOOK_OUT_DIR", "/env/dir")
+    assert resolve_out_path(cfg, None, "T") == Path("/env/dir/T.m4b")
+    monkeypatch.setenv("AUDIOBOOK_OUT_DIR", "")  # empty must NOT override
+    assert resolve_out_path(cfg, None, "T") == Path("/books/T.m4b")

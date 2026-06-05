@@ -10,7 +10,7 @@ cd "$PROJECT_DIR"
 
 # ---------- defaults ----------
 INPUT=""   # default resolved below: ./input/book.epub or ./input/book.pdf
-OUT="./out/book.m4b"
+OUT=""     # default resolved from config ([assemble].out_dir / <title>.m4b) below
 WORK="./work"
 CONFIG="./config.toml"
 VOICE=""
@@ -41,7 +41,7 @@ Arguments:
   INPUT_BOOK        Path to input EPUB or PDF (default: ./input/book.epub, then ./input/book.pdf)
 
 Options:
-  --out PATH        Output .m4b path (default: ./out/book.m4b)
+  --out PATH        Output .m4b path (default: [assemble].out_dir / <title>.m4b)
   --work DIR        Work directory (default: ./work)
   --config FILE     Config file (default: ./config.toml)
   --voice NAME      Saved voice name OR path to a WAV
@@ -254,6 +254,11 @@ else
 fi
 
 run_stage 7 validate-render      bin/audiobook validate-render "$WORK"
+# Resolve the output path from config (env > config.local.toml > config.toml)
+# unless the user passed --out explicitly.
+if [[ -z "$OUT" ]]; then
+  OUT="$(bin/audiobook out-path --config "$CONFIG")"
+fi
 run_stage 8 assemble             bin/audiobook assemble "$WORK" --out "$OUT" --config "$CONFIG"
 
 END_T=$(date +%s)

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -87,6 +88,10 @@ class RenderConfig(_Strict):
 class AssembleConfig(_Strict):
     audio_bitrate_kbps: int = 64
     sample_rate_hz: int = 24000
+    # Folder for the final .m4b. Override locally via config.local.toml or the
+    # AUDIOBOOK_OUT_DIR env var (see resolve_out_path). The filename is derived
+    # from [book].title.
+    out_dir: str = "./out"
 
 
 class AppConfig(_Strict):
@@ -98,12 +103,56 @@ class AppConfig(_Strict):
     assemble: AssembleConfig = Field(default_factory=AssembleConfig)
 
 
+def _deep_merge(base: dict, overlay: dict) -> dict:
+    """Recursively merge ``overlay`` onto ``base`` (overlay wins). Nested tables
+    merge per-key; scalars and lists are replaced wholesale."""
+    out = dict(base)
+    for key, val in overlay.items():
+        if isinstance(val, dict) and isinstance(out.get(key), dict):
+            out[key] = _deep_merge(out[key], val)
+        else:
+            out[key] = val
+    return out
+
+
 def load_config(path: Path) -> AppConfig:
-    data = tomllib.loads(Path(path).read_text(encoding="utf-8"))
+    """Load ``config.toml``, deep-merging a sibling ``config.local.toml`` if one
+    exists (local values win). The local overlay is gitignored, so machine-specific
+    settings (e.g. an output folder) stay out of version control."""
+    path = Path(path)
+    data = tomllib.loads(path.read_text(encoding="utf-8"))
+    local = path.with_name(f"{path.stem}.local{path.suffix}")
+    if local.exists():
+        data = _deep_merge(data, tomllib.loads(local.read_text(encoding="utf-8")))
     try:
         return AppConfig.model_validate(data)
     except Exception as exc:
         raise ValueError(f"invalid config {path}: {exc}") from exc
+
+
+def safe_filename(name: str, fallback: str = "book") -> str:
+    """Turn a book title into a filesystem-safe filename stem (no extension).
+
+    Strips characters illegal on common filesystems, collapses whitespace, and
+    trims leading/trailing dots/spaces. Returns ``fallback`` when nothing usable
+    remains.
+    """
+    cleaned = re.sub(r'[\\/:*?"<>|\x00-\x1f]', "", name)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip().strip(".").strip()
+    return cleaned or fallback
+
+
+def resolve_out_path(cfg: AppConfig, explicit: Path | None, title: str) -> Path:
+    """Resolve the final .m4b path.
+
+    Precedence: an explicit ``--out`` path wins; otherwise the output folder is
+    ``AUDIOBOOK_OUT_DIR`` (if set and non-empty) else ``[assemble].out_dir``, and
+    the filename is derived from the book ``title``.
+    """
+    if explicit is not None:
+        return explicit
+    out_dir = os.environ.get("AUDIOBOOK_OUT_DIR", "") or cfg.assemble.out_dir
+    return Path(out_dir).expanduser() / f"{safe_filename(title)}.m4b"
 
 
 @dataclass(slots=True)

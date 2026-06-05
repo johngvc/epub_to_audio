@@ -9,6 +9,9 @@ build/
 dist/
 .DS_Store
 
+# Local machine-specific config overlay (overrides config.toml; never committed)
+config.local.toml
+
 # Project working/output dirs
 input/
 voice/*
