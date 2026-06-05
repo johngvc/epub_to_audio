@@ -8,10 +8,10 @@ See `epub_to_audio_spec.md` for the full spec, `docs/superpowers/specs/` for des
 
 | Where | Stages |
 |---|---|
-| **Docker** (`audiobook:dev`) | parse, validate-adapted, merge-pronunciation, chunk, validate-render, assemble, status, `voice validate` |
-| **Host** (`uv` venv, needs MPS / LM Studio) | render (TTS), api-mode adapt, `lms-load`/`lms-unload`, `voice` save/list/rm/preview |
+| **Docker** (`audiobook:dev`) | parse, validate-adapted, merge-pronunciation, chunk, validate-render, status, `voice validate` |
+| **Host** (`uv` venv, needs MPS / LM Studio / ffmpeg) | render (TTS), api-mode adapt, **assemble** (needs ffmpeg), `out-path`, `lms-load`/`lms-unload`, `voice` save/list/rm/preview |
 
-`bin/audiobook` routes every subcommand automatically — you never type `docker compose` or `uv run`.
+`bin/audiobook` routes every subcommand automatically — you never type `docker compose` or `uv run`. `assemble` runs on the **host** (not Docker) so it can use host `ffmpeg` and write the final `.m4b` straight to an output folder outside the repo (e.g. a cloud-sync directory — see [Output location](#output-location)).
 
 ## Prerequisites
 
@@ -19,6 +19,7 @@ macOS host:
 
 - [colima](https://github.com/abiosoft/colima) + Docker CLI — `brew install colima docker docker-compose`
 - [uv](https://github.com/astral-sh/uv) — `brew install uv`
+- [ffmpeg](https://ffmpeg.org/) — `brew install ffmpeg` (host-side Stage 5 assemble; `scripts/host-install.sh` installs it for you)
 - One of, for Stage 2 (adapt):
   - **api mode** (unattended, default): [LM Studio](https://lmstudio.ai/) with a capable model loaded — see [Picking a model](#picking-a-model).
   - **agent mode** (interactive): [Claude Code](https://docs.claude.com/en/docs/claude-code) on a Pro/Max plan — see [Agent mode](#agent-mode).
@@ -32,7 +33,7 @@ The one-command happy path, api mode:
    ```sh
    brew install colima docker docker-compose uv
    bin/dev                  # start Colima, build the audiobook:dev image
-   scripts/host-install.sh  # create .venv (torch + chatterbox + openai)
+   scripts/host-install.sh  # create .venv (torch + chatterbox + openai) + host ffmpeg
    ```
 
 2. **Add inputs:**
@@ -72,7 +73,7 @@ The one-command happy path, api mode:
    ```sh
    bin/audiobook run
    ```
-   Defaults: `input/book.epub` (then `input/book.pdf`) → `out/book.m4b`, work dir `./work`, config `./config.toml`. Override with `--out`, `--work`, `--config`, `--voice`. Use `--fresh` to wipe `work/` first, `--skip-preflight` to bypass dependency checks.
+   Defaults: `input/book.epub` (then `input/book.pdf`) → `[assemble].out_dir / <title>.m4b` (default `out/`, filename from `[book].title`), work dir `./work`, config `./config.toml`. Override with `--out`, `--work`, `--config`, `--voice`. Use `--fresh` to wipe `work/` first, `--skip-preflight` to bypass dependency checks. See [Output location](#output-location) to send the `.m4b` to a cloud-sync folder.
 
 `run` auto-installs prerequisites (Colima, Docker image, host venv), runs all 8 stages in order, and aborts on the first failure with a resume hint. Render is ~2-4h on Apple Silicon. **Every stage is idempotent** — re-run to resume after an interruption.
 
@@ -106,10 +107,10 @@ bin/audiobook merge-pronunciation ./work              # 4  Docker
 bin/audiobook chunk ./work                            # 5  Docker
 bin/audiobook render ./work --voice default           # 6  Host (MPS)
 bin/audiobook validate-render ./work                  # 7  Docker (gate: exit 0/1)
-bin/audiobook assemble ./work --out ./out/book.m4b    # 8  Docker
+bin/audiobook assemble ./work                         # 8  Host  (ffmpeg)
 ```
 
-`assemble` reads `title`/`author`/`narrator` from `[book]`; pass `--title`/`--author`/`--narrator` to override, `--cover PATH` to embed art. Every stage skips chapters/chunks whose outputs already exist and pass validation, so re-running resumes; `adapt` re-runs only the missing/invalid chapters.
+`assemble` reads `title`/`author`/`narrator` from `[book]`; pass `--title`/`--author`/`--narrator` to override, `--cover PATH` to embed art. `--out` is optional — when omitted it writes `[assemble].out_dir / <title>.m4b` (see [Output location](#output-location)); `bin/audiobook out-path` prints exactly where the next run will write. Every stage skips chapters/chunks whose outputs already exist and pass validation, so re-running resumes; `adapt` re-runs only the missing/invalid chapters.
 
 **Progress:** add `-v` / `--verbose` to `parse`, `adapt`, `chunk`, `render`, or `assemble` for per-step lines with completion percentages (e.g. `[render] 152/387 (39%)`). Default output is unchanged.
 
@@ -117,11 +118,11 @@ bin/audiobook assemble ./work --out ./out/book.m4b    # 8  Docker
 
 If a chapter sounds off, before re-rendering:
 
-1. Inspect `work/chapters/adapted/NN_*.json` — the exact text Chatterbox will speak.
+1. Inspect `work/chapters/adapted/NN_*.json` — the exact text the engine will speak (you can hand-insert an `[[beat]]` for a dramatic pause).
 2. Inspect `work/pronunciation.json` — substitutions applied to every chunk.
 3. Edit either by hand, **or** delete the file and re-run the prior stage.
 
-Because stages are idempotent, only the touched chapters/chunks are redone.
+Because stages are idempotent, only the touched chapters/chunks are redone. If the **timing** feels off (run-on sentences, headings not standing out), tune the `[chunk]` silence knobs and re-`chunk` — see [Pauses & pacing](#pauses--pacing); since silence is post-processing, re-rendering TTS isn't needed.
 
 ## Voices
 
@@ -158,15 +159,59 @@ All knobs live in `config.toml`. The most useful (defaults shown are the values 
 | `[adapt.api].manage_model` | `run` loads before adapt, unloads before render | Default true; host-only, needs `lms` |
 | `[adapt.api].load_context_length` | Load context (`lms load -c`) | Unset = LM Studio default; lower = much less KV-cache RAM |
 | `[chunk].max_chars` | TTS chunk size | 400 is stable |
-| `[chunk].paragraph_silence_ms` / `.section_silence_ms` | Pauses between paragraphs / `---` breaks | |
+| `[chunk].sentence_silence_ms` | Pause between sentences in a paragraph | Default 300; see [Pauses & pacing](#pauses--pacing) |
+| `[chunk].paragraph_silence_ms` / `.section_silence_ms` | Pauses between paragraphs / `---` breaks | Defaults 400 / 1200 |
+| `[chunk].title_silence_ms` | Pause after a chapter title / section heading | Default 800; headings auto-detected from `<h2>` |
+| `[chunk].beat_silence_ms` | Pause at an adapter-emitted `[[beat]]` sentinel | Default 600 |
 | `[render].engine` | TTS engine: `chatterbox` or `kokoro` | Default `chatterbox`; see [TTS engines](#tts-engines) |
 | `[render].device`, `.workers` | `mps`/`cuda`/`cpu`; parallel TTS workers | Apple Silicon = `mps`; 1-2 workers per GPU |
 | `[render].exaggeration`, `.cfg_weight`, `.temperature` | Chatterbox voice knobs | Tuned for spoken word |
 | `[render].kokoro_voice`, `.kokoro_speed` | Kokoro built-in voice + speed | e.g. `af_heart`, `bm_george`; speed 1.0 |
 | `[assemble].audio_bitrate_kbps` | AAC bitrate | 64 kbps fine for speech |
+| `[assemble].out_dir` | Folder for the final `.m4b` (filename from `[book].title`) | Default `./out`; override locally — see [Output location](#output-location) |
 | `[parse].parser`, `.footnote_policy`, `.chapter_level` | PDF ingestion | EPUB ignores these |
 
-**Env-var overrides** for `[adapt.api]` (only when set and non-empty): `OPENAI_BASE_URL` → `base_url`, `OPENAI_MODEL` → `model`, `OPENAI_API_KEY` → `api_key`.
+**Env-var overrides** (only when set and non-empty): `OPENAI_BASE_URL` → `[adapt.api].base_url`, `OPENAI_MODEL` → `.model`, `OPENAI_API_KEY` → `.api_key`; `AUDIOBOOK_OUT_DIR` → `[assemble].out_dir`.
+
+**Local overrides without touching git.** Drop a gitignored `config.local.toml` next to `config.toml`; `load_config` deep-merges it on top (local wins), so machine-specific values stay out of version control. Useful for an output folder, a different voice, or per-machine RAM/context settings. Precedence for the output folder: `AUDIOBOOK_OUT_DIR` env > `config.local.toml` > `config.toml`.
+
+```toml
+# config.local.toml — not committed
+[assemble]
+out_dir = "/Users/you/Library/CloudStorage/OneDrive-Personal/Audiobooks"
+```
+
+## Output location
+
+The final `.m4b` is written to `[assemble].out_dir` with a filename derived from `[book].title` (e.g. `Learning Domain-Driven Design.m4b`). Resolution precedence:
+
+1. `--out PATH` on the CLI (a full path; wins outright)
+2. `AUDIOBOOK_OUT_DIR` env var (folder)
+3. `[assemble].out_dir` from `config.local.toml`, then `config.toml`
+
+Because `assemble` runs on the **host**, `out_dir` can point anywhere the host can write — including a cloud-sync folder (OneDrive, Dropbox, iCloud Drive) — and the `.m4b` lands there directly, no copy step. Keep the committed `config.toml` generic (`out_dir = "./out"`) and put your real path in the gitignored `config.local.toml`.
+
+```sh
+bin/audiobook out-path                 # print where assemble will write
+bin/audiobook out-path --title "X"     # … for a specific title
+bin/audiobook assemble ./work          # write there; or --out PATH for a one-off
+```
+
+## Pauses & pacing
+
+Pauses are **real inserted silence** at chunk boundaries (engine-agnostic — identical under Chatterbox or Kokoro — rather than relying on the TTS engine's prosody, which neither does reliably). Stage 3 (`chunk`) is sentence-granular: each sentence is its own chunk carrying a trailing silence, sized by structural role (`[chunk]` knobs, in ms):
+
+| Boundary | Knob | Default |
+|---|---|---|
+| Between sentences in a paragraph | `sentence_silence_ms` | 300 |
+| Between paragraphs | `paragraph_silence_ms` | 400 |
+| After a chapter title / section heading | `title_silence_ms` | 800 |
+| At a `---` section break | `section_silence_ms` | 1200 |
+| At an `[[beat]]` sentinel | `beat_silence_ms` | 600 |
+
+- **Headings** are auto-detected: the chunker recovers `<h1>`–`<h6>` text from the raw chapter HTML (which adapt flattens into plain paragraphs) and the chapter's first paragraph, and gives them `title_silence_ms`. A heading the adapter paraphrased away falls back safely to a normal paragraph pause.
+- **`[[beat]]`** is a control token the adapter may emit inside `adapted_text` to mark a deliberate dramatic pause; the chunker maps it to `beat_silence_ms` and strips the token so it is never spoken (adapt rule 9, used sparingly).
+- The engine trims its own edge silence to ~50 ms, so the **audible gap ≈ knob + ~100 ms**. Tuning a value re-chunks only; since silence is post-processing you can re-pace existing renders without re-running TTS.
 
 ## TTS engines
 
@@ -239,7 +284,8 @@ bin/audiobook merge-pronunciation ./work             # Docker
 bin/audiobook chunk ./work                           # Docker — Stage 3
 bin/audiobook render ./work --voice NAME             # Host (MPS) — Stage 4
 bin/audiobook validate-render ./work                 # Docker — Stage 4 gate
-bin/audiobook assemble ./work --out ./out/book.m4b   # Docker — Stage 5
+bin/audiobook assemble ./work [--out PATH]           # Host (ffmpeg) — Stage 5; default out_dir/<title>.m4b
+bin/audiobook out-path [--title X]                   # Host — print resolved .m4b path
 bin/audiobook status ./work                          # Read work/state.json
 bin/audiobook voice save|list|rm|preview|validate    # Voice library (see Voices)
 bin/audiobook lms-load [--context-length N]          # Host — load configured LLM
@@ -263,7 +309,7 @@ Source edits are picked up via the bind mount — no rebuild for `.py` changes.
 
 ```
 audiobook/                Python package (CLI + each stage)
-prompts/                  Adaptation system prompt (rule 8 = pronunciation guidance)
+prompts/                  Adaptation system prompt (rule 8 = pronunciation, rule 9 = [[beat]] pauses)
 tests/                    pytest suite + tiny.epub fixture
 scripts/                  Host install + helpers (make_test_epub.py)
 bin/                      dev launcher + audiobook/audiobook-test wrappers

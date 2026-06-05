@@ -4,10 +4,10 @@ You are orchestrating the conversion of an EPUB book into an audiobook. Follow t
 
 ## How this project runs
 
-This project uses one Docker container for stages 1, 2, 3, and 5, plus the host environment for stage 4 (TTS) and the orchestration you are performing right now. A wrapper script (`bin/audiobook`) routes each subcommand to the right place automatically — you never need to type `docker compose` or `uv run` directly.
+This project uses one Docker container for stages 1, 2, and 3, plus the host environment for stage 4 (TTS) and stage 5 (assemble, which needs host `ffmpeg` and writes the final `.m4b` to a host path), and the orchestration you are performing right now. A wrapper script (`bin/audiobook`) routes each subcommand to the right place automatically — you never need to type `docker compose` or `uv run` directly.
 
 - All paths in commands are **relative to the project root**, and resolve identically inside and outside the container thanks to a bind mount at `/workspace`.
-- Stage 4 (`audiobook render`, `audiobook voice preview`) runs on the host via `uv` so it can use Apple Silicon's MPS GPU. Every other `audiobook ...` call runs in Docker. The wrapper handles this distinction; just use `audiobook <subcommand> ...`.
+- Stage 4 (`audiobook render`, `audiobook voice preview`) runs on the host via `uv` so it can use Apple Silicon's MPS GPU. Stage 5 (`audiobook assemble`, `audiobook out-path`) also runs on the host (needs `ffmpeg`; writes the `.m4b` to the configured `[assemble].out_dir`, which may be outside the repo). Every other `audiobook ...` call runs in Docker. The wrapper handles this distinction; just use `audiobook <subcommand> ...`.
 - If `bin/` is not in your PATH, invoke commands as `bin/audiobook ...`.
 
 ## Setup verification
@@ -65,9 +65,11 @@ Then: `bin/audiobook validate-render ./work` to confirm no chunks failed quality
 
 ## Stage 5 — Assemble
 
-Run: `bin/audiobook assemble ./work --out ./out/book.m4b`
+Run: `bin/audiobook assemble ./work`
 
 This reads `[book].title`, `[book].author`, and `[book].narrator` from `config.toml`. To override per-run, pass `--title`, `--author`, and/or `--narrator`. To embed cover art, pass `--cover ./input/cover.jpg`.
+
+`--out` is optional: when omitted the `.m4b` is written to `[assemble].out_dir / <title>.m4b` (filename derived from `[book].title`). `out_dir` defaults to `./out` but is commonly overridden to an external folder (e.g. a cloud-sync directory) via a gitignored `config.local.toml` or the `AUDIOBOOK_OUT_DIR` env var. Run `bin/audiobook out-path` to print the resolved destination before assembling.
 
 ## Reporting
 
